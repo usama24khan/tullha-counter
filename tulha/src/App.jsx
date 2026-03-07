@@ -15,10 +15,10 @@ function useWindowWidth() {
 const GameContext = createContext(null);
 
 const SUITS = [
-  { key: "dil",   label: "DIL",   symbol: "♥", color: "#e63946" },
-  { key: "eet", label: "Eet", symbol: "♦", color: "#e05c67" },
-  { key: "chiri",    label: "Chiri",    symbol: "♣", color: "#d0e8ff" },
-  { key: "hukam",   label: "Hukam",   symbol: "♠", color: "#c8d8f0" },
+  { key: "hearts",   label: "Hearts",   symbol: "♥", color: "#e63946" },
+  { key: "diamonds", label: "Diamonds", symbol: "♦", color: "#e05c67" },
+  { key: "clubs",    label: "Clubs",    symbol: "♣", color: "#d0e8ff" },
+  { key: "spades",   label: "Spades",   symbol: "♠", color: "#c8d8f0" },
 ];
 
 function buildInitialState({ players, decks, playerNames }) {
@@ -26,8 +26,8 @@ function buildInitialState({ players, decks, playerNames }) {
   const suits = {};
   SUITS.forEach(s => { suits[s.key] = { total: totalPerSuit, discarded: 0 }; });
   const playerStatus = {};
-  players.forEach((_, i) => {
-    playerStatus[i] = { hearts: true, diamonds: true, clubs: true, spades: true };
+  players.forEach((playerIdx) => {
+    playerStatus[playerIdx] = { hearts: true, diamonds: true, clubs: true, spades: true };
   });
   return { players, playerNames, decks, suits, playerStatus, history: [], thullaLog: [] };
 }
