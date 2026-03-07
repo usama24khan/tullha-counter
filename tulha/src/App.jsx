@@ -352,7 +352,7 @@ function Dashboard({ onReset }) {
             {/* Tabs below suits on desktop */}
             <div style={{ borderTop: "1px solid #c9a84c1a", paddingTop: 24 }}>
               <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
-                {[{ id: "players", label: "👤 Players" }, { id: "history", label: "📜 History" }].map(t => (
+                {[{ id: "players", label: "👤 Players" }, { id: "history", label: "📜 History" }, { id: "advisor", label: "🧠 Advisor" }].map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)} style={{
                     padding: "10px 22px", background: tab === t.id ? "#0d1e33" : "transparent",
                     color: tab === t.id ? "#c9a84c" : "#3a5060",
@@ -363,13 +363,14 @@ function Dashboard({ onReset }) {
               </div>
               {tab === "players" && <PlayersTab isDesktop={true} />}
               {tab === "history" && <HistoryTab />}
+              {tab === "advisor" && <AdvisorTab isDesktop={true} />}
             </div>
           </div>
         ) : (
           /* ── MOBILE: Tabs ── */
           <>
             <div style={{ display: "flex", background: "#040c16", borderBottom: "1px solid #c9a84c1a" }}>
-              {[{ id: "suits", label: "♠ Suits" }, { id: "players", label: "👤 Players" }, { id: "history", label: "📜 History" }].map(t => (
+              {[{ id: "suits", label: "♠ Suits" }, { id: "players", label: "👤 Players" }, { id: "history", label: "📜 History" }, { id: "advisor", label: "🧠 Advisor" }].map(t => (
                 <button key={t.id} onClick={() => setTab(t.id)} style={{
                   flex: 1, padding: "12px 6px",
                   background: tab === t.id ? "#0d1e33" : "transparent",
@@ -387,6 +388,7 @@ function Dashboard({ onReset }) {
               )}
               {tab === "players" && <PlayersTab isDesktop={false} />}
               {tab === "history" && <HistoryTab />}
+              {tab === "advisor" && <AdvisorTab isDesktop={false} />}
             </div>
           </>
         )}
@@ -686,6 +688,290 @@ function HistoryTab() {
         }
         return null;
       })}
+    </div>
+  );
+}
+
+
+// ─── ADVISOR TAB ─────────────────────────────────────────────────────────────
+function AdvisorTab({ isDesktop }) {
+  const { state } = useContext(GameContext);
+  const [selectedPlayer, setSelectedPlayer] = useState(0);
+
+  // ── LOGIC ENGINE ──
+  const suits = state.suits;
+  const playerStatus = state.playerStatus;
+  const numPlayers = state.players.length;
+
+  // For each suit: remaining cards, % left, danger level
+  const suitStats = SUITS.map(suit => {
+    const s = suits[suit.key];
+    const rem = remCards(s);
+    const p = pct(s);
+    const playersOut = state.players.filter(i => !playerStatus[i][suit.key]).length;
+    const playersIn  = numPlayers - playersOut;
+    // Probability someone at table is out of this suit
+    const outChance = playersOut / numPlayers;
+    // Danger: low cards + many players still in = risky to lead
+    const dangerScore = (1 - p) * 0.6 + outChance * 0.4;
+    return { ...suit, rem, p, playersOut, playersIn, dangerScore, s };
+  });
+
+  // Best suit to LEAD (you want everyone to follow = discard cards)
+  // Ideal: high remaining %, few players out
+  const bestToLead = [...suitStats].sort((a, b) => {
+    const scoreA = a.p * 0.5 + (1 - a.playersOut / numPlayers) * 0.5;
+    const scoreB = b.p * 0.5 + (1 - b.playersOut / numPlayers) * 0.5;
+    return scoreB - scoreA;
+  })[0];
+
+  // Most dangerous suit to lead (likely to get Thulla)
+  const riskiestToLead = [...suitStats].sort((a, b) => b.dangerScore - a.dangerScore)[0];
+
+  // Suit with most cards still in play = safest to bleed out
+  const mostCards = [...suitStats].sort((a, b) => b.rem - a.rem)[0];
+
+  // Per-player advice
+  const playerAdvice = state.players.map(playerIdx => {
+    const name = state.playerNames[playerIdx];
+    const missingsSuits = SUITS.filter(s => !playerStatus[playerIdx][s.key]);
+    const hasSuits = SUITS.filter(s => playerStatus[playerIdx][s.key]);
+
+    // Suits this player CAN follow
+    const safeSuitsToLead = hasSuits.filter(s => {
+      const stat = suitStats.find(ss => ss.key === s.key);
+      return stat.p > 0.4; // still has good cards remaining
+    });
+
+    // Best suit to lead against this player (they are OUT of it = Thulla opportunity)
+    const exploitSuits = missingsSuits.map(s => suitStats.find(ss => ss.key === s.key));
+
+    // Risk level for this player
+    const riskLevel = missingsSuits.length === 0 ? "low" :
+                      missingsSuits.length === 1 ? "medium" : "high";
+
+    return { playerIdx, name, missingsSuits, hasSuits, safeSuitsToLead, exploitSuits, riskLevel };
+  });
+
+  const selectedAdvice = playerAdvice.find(p => p.playerIdx === selectedPlayer);
+
+  const riskColor = { low: "#4ade80", medium: "#f59e0b", high: "#e63946" };
+  const riskBg    = { low: "#081a0a", medium: "#1a1208", high: "#1a0808" };
+  const riskBorder= { low: "#4ade8033", medium: "#f59e0b33", high: "#e6394633" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── GLOBAL STRATEGY PANEL ── */}
+      <div style={{
+        background: "linear-gradient(135deg, #0d1e33, #09172a)",
+        border: "1px solid #c9a84c33", borderRadius: 14, padding: "20px 22px",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <span style={{ fontSize: 20 }}>🧠</span>
+          <span style={{ color: "#c9a84c", fontSize: 11, letterSpacing: 2, fontWeight: "bold" }}>GAME STRATEGY ADVISOR</span>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(3,1fr)" : "1fr", gap: 12 }}>
+
+          {/* Best suit to lead */}
+          <div style={{ background: "#081a0a", border: "1px solid #4ade8033", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ color: "#4ade80", fontSize: 10, letterSpacing: 1.5, marginBottom: 8 }}>✅ BEST SUIT TO LEAD</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span style={{ fontSize: 28, color: bestToLead.color }}>{bestToLead.symbol}</span>
+              <div>
+                <div style={{ color: "#d8ccc0", fontWeight: "bold", fontSize: 15 }}>{bestToLead.label}</div>
+                <div style={{ color: "#4a6a5a", fontSize: 11 }}>{bestToLead.rem} cards left · {bestToLead.playersOut} players out</div>
+              </div>
+            </div>
+            <div style={{ color: "#4a8a5a", fontSize: 12, lineHeight: 1.6 }}>
+              Most players still have this suit. Leading it will likely discard {numPlayers} cards cleanly.
+            </div>
+          </div>
+
+          {/* Riskiest suit to lead */}
+          <div style={{ background: "#1a0808", border: "1px solid #e6394633", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ color: "#e63946", fontSize: 10, letterSpacing: 1.5, marginBottom: 8 }}>⚠ AVOID LEADING</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span style={{ fontSize: 28, color: riskiestToLead.color }}>{riskiestToLead.symbol}</span>
+              <div>
+                <div style={{ color: "#d8ccc0", fontWeight: "bold", fontSize: 15 }}>{riskiestToLead.label}</div>
+                <div style={{ color: "#6a3a3a", fontSize: 11 }}>{riskiestToLead.rem} cards left · {riskiestToLead.playersOut} players out</div>
+              </div>
+            </div>
+            <div style={{ color: "#8a4a4a", fontSize: 12, lineHeight: 1.6 }}>
+              {riskiestToLead.playersOut} player(s) are confirmed out. Leading this risks getting a Thulla pile back.
+            </div>
+          </div>
+
+          {/* Suit to drain */}
+          <div style={{ background: "#0a0e1a", border: "1px solid #a78bfa33", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ color: "#a78bfa", fontSize: 10, letterSpacing: 1.5, marginBottom: 8 }}>🎯 DRAIN THIS SUIT</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span style={{ fontSize: 28, color: mostCards.color }}>{mostCards.symbol}</span>
+              <div>
+                <div style={{ color: "#d8ccc0", fontWeight: "bold", fontSize: 15 }}>{mostCards.label}</div>
+                <div style={{ color: "#4a4a6a", fontSize: 11 }}>{mostCards.rem} cards remaining</div>
+              </div>
+            </div>
+            <div style={{ color: "#6a6a9a", fontSize: 12, lineHeight: 1.6 }}>
+              Most cards remain in this suit. Keep leading it to deplete opponents' hands fastest.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SUIT THREAT METER ── */}
+      <div style={{ background: "linear-gradient(135deg, #0d1e33, #09172a)", border: "1px solid #c9a84c22", borderRadius: 14, padding: "18px 22px" }}>
+        <div style={{ color: "#c9a84c", fontSize: 11, letterSpacing: 2, marginBottom: 14 }}>♟ SUIT THREAT METER</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {[...suitStats].sort((a,b) => b.dangerScore - a.dangerScore).map((suit, rank) => {
+            const threatPct = Math.round(suit.dangerScore * 100);
+            const threatColor = threatPct > 60 ? "#e63946" : threatPct > 35 ? "#f59e0b" : "#4ade80";
+            return (
+              <div key={suit.key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ color: "#3a5060", fontSize: 11, width: 14 }}>#{rank+1}</span>
+                <span style={{ color: suit.color, fontSize: 18, width: 20 }}>{suit.symbol}</span>
+                <span style={{ color: "#8a9aaa", fontSize: 13, width: isDesktop ? 80 : 70 }}>{suit.label}</span>
+                <div style={{ flex: 1, background: "#060f1c", borderRadius: 6, height: 8, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", borderRadius: 6, width: `${threatPct}%`,
+                    background: `linear-gradient(90deg, ${threatColor}66, ${threatColor})`,
+                    transition: "width 0.5s",
+                  }}/>
+                </div>
+                <span style={{ color: threatColor, fontSize: 12, fontWeight: "bold", width: 40, textAlign: "right" }}>
+                  {threatPct}%
+                </span>
+                <span style={{ fontSize: 10, color: "#3a5060", width: isDesktop ? 100 : 60 }}>
+                  {suit.playersOut} out of {numPlayers}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ color: "#2a3a4a", fontSize: 11, marginTop: 12 }}>
+          Higher % = more dangerous to lead. Based on cards remaining + players confirmed out.
+        </div>
+      </div>
+
+      {/* ── PER PLAYER ADVISOR ── */}
+      <div style={{ background: "linear-gradient(135deg, #0d1e33, #09172a)", border: "1px solid #c9a84c22", borderRadius: 14, padding: "18px 22px" }}>
+        <div style={{ color: "#c9a84c", fontSize: 11, letterSpacing: 2, marginBottom: 14 }}>👤 PLAYER ADVISOR</div>
+
+        {/* Player selector */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+          {state.players.map(i => (
+            <button key={i} onClick={() => setSelectedPlayer(i)} style={{
+              background: selectedPlayer === i ? "linear-gradient(135deg,#c9a84c,#9a6e20)" : "#060f1c",
+              color: selectedPlayer === i ? "#060f1c" : "#6a8aaa",
+              border: `1px solid ${selectedPlayer === i ? "#c9a84c" : "#1a2a3a"}`,
+              borderRadius: 8, padding: "8px 16px",
+              cursor: "pointer", fontFamily: "'Georgia',serif",
+              fontWeight: selectedPlayer === i ? "bold" : "normal", fontSize: 13,
+            }}>
+              {state.playerNames[i]}
+            </button>
+          ))}
+        </div>
+
+        {selectedAdvice && (
+          <div>
+            {/* Risk badge */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <div style={{
+                background: riskBg[selectedAdvice.riskLevel],
+                border: `1px solid ${riskBorder[selectedAdvice.riskLevel]}`,
+                borderRadius: 8, padding: "6px 14px",
+                color: riskColor[selectedAdvice.riskLevel],
+                fontSize: 12, fontWeight: "bold",
+              }}>
+                {selectedAdvice.riskLevel === "low" ? "🟢 LOW THREAT" :
+                 selectedAdvice.riskLevel === "medium" ? "🟡 MEDIUM THREAT" : "🔴 HIGH THREAT"}
+              </div>
+              <span style={{ color: "#3a5060", fontSize: 12 }}>
+                {selectedAdvice.missingsSuits.length === 0
+                  ? "Has all suits — unpredictable player"
+                  : `Confirmed out of ${selectedAdvice.missingsSuits.length} suit(s)`}
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", gap: 12 }}>
+
+              {/* What they have */}
+              <div style={{ background: "#060f1c", border: "1px solid #c9a84c1a", borderRadius: 10, padding: "14px 16px" }}>
+                <div style={{ color: "#4a6a8a", fontSize: 10, letterSpacing: 1.5, marginBottom: 10 }}>KNOWN SUITS</div>
+                {selectedAdvice.hasSuits.length === 0 ? (
+                  <div style={{ color: "#3a5060", fontSize: 13 }}>No confirmed suits remaining.</div>
+                ) : selectedAdvice.hasSuits.map(s => {
+                  const stat = suitStats.find(ss => ss.key === s.key);
+                  return (
+                    <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <span style={{ fontSize: 20, color: s.color }}>{s.symbol}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ color: "#d8ccc0", fontSize: 13 }}>{s.label}</span>
+                          <span style={{ color: "#4ade80", fontSize: 12 }}>{stat.rem} left</span>
+                        </div>
+                        <div style={{ background: "#0a1628", borderRadius: 4, height: 4, marginTop: 4, overflow: "hidden" }}>
+                          <div style={{ height: "100%", borderRadius: 4, width: `${stat.p * 100}%`, background: s.color }}/>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Exploit opportunities */}
+              <div style={{ background: "#060f1c", border: "1px solid #c9a84c1a", borderRadius: 10, padding: "14px 16px" }}>
+                <div style={{ color: "#4a6a8a", fontSize: 10, letterSpacing: 1.5, marginBottom: 10 }}>EXPLOIT (LEAD THESE)</div>
+                {selectedAdvice.exploitSuits.length === 0 ? (
+                  <div>
+                    <div style={{ color: "#3a5060", fontSize: 13, marginBottom: 8 }}>No confirmed weak suits yet.</div>
+                    <div style={{ color: "#2a4a3a", fontSize: 12, lineHeight: 1.6 }}>
+                      Watch this player carefully. Record a Thulla when they can't follow to reveal their weak suits.
+                    </div>
+                  </div>
+                ) : selectedAdvice.exploitSuits.map(stat => (
+                  <div key={stat.key} style={{
+                    display: "flex", alignItems: "center", gap: 10, marginBottom: 10,
+                    background: "#1a0808", border: "1px solid #e6394622",
+                    borderRadius: 8, padding: "10px 12px",
+                  }}>
+                    <span style={{ fontSize: 24, color: stat.color }}>{stat.symbol}</span>
+                    <div>
+                      <div style={{ color: "#e8d0c8", fontSize: 13, fontWeight: "bold" }}>Lead {stat.label}!</div>
+                      <div style={{ color: "#6a3a3a", fontSize: 11 }}>
+                        {state.playerNames[selectedPlayer]} is OUT — they must Thulla or pick up the pile
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Smart tip */}
+            <div style={{
+              marginTop: 14, background: "#0a0e1a", border: "1px solid #a78bfa22",
+              borderRadius: 10, padding: "12px 16px",
+              display: "flex", alignItems: "flex-start", gap: 10,
+            }}>
+              <span style={{ fontSize: 18, flexShrink: 0 }}>💡</span>
+              <div style={{ color: "#7a8ab0", fontSize: 12, lineHeight: 1.7 }}>
+                {selectedAdvice.missingsSuits.length === 0 && selectedAdvice.riskLevel === "low" &&
+                  `${state.playerNames[selectedPlayer]} has all suits and is unpredictable. Lead high-remaining suits to force card burn without risk of Thulla.`}
+                {selectedAdvice.missingsSuits.length === 1 &&
+                  `${state.playerNames[selectedPlayer]} is out of ${selectedAdvice.missingsSuits[0].label}. Lead it to force them to throw a different suit — you can then pick the best card to win the pile or let it discard.`}
+                {selectedAdvice.missingsSuits.length >= 2 &&
+                  `${state.playerNames[selectedPlayer]} is a high-risk player — out of ${selectedAdvice.missingsSuits.length} suits. They are likely holding a small hand. Lead any of their missing suits to force maximum disruption.`}
+                {selectedAdvice.missingsSuits.length === 0 && selectedAdvice.riskLevel !== "low" &&
+                  `No Thullas recorded yet for ${state.playerNames[selectedPlayer]}. Be cautious — they could be hiding weak suits. Watch their play pattern closely.`}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }
