@@ -15,10 +15,10 @@ function useWindowWidth() {
 const GameContext = createContext(null);
 
 const SUITS = [
-  { key: "hearts",   label: "Hearts",   symbol: "♥", color: "#e63946" },
-  { key: "diamonds", label: "Diamonds", symbol: "♦", color: "#e05c67" },
-  { key: "clubs",    label: "Clubs",    symbol: "♣", color: "#d0e8ff" },
-  { key: "spades",   label: "Spades",   symbol: "♠", color: "#c8d8f0" },
+  { key: "dil",   label: "DIL",   symbol: "♥", color: "#e63946" },
+  { key: "eet", label: "Eet", symbol: "♦", color: "#e05c67" },
+  { key: "chiri",    label: "Chiri",    symbol: "♣", color: "#d0e8ff" },
+  { key: "hukam",   label: "Hukam",   symbol: "♠", color: "#c8d8f0" },
 ];
 
 function buildInitialState({ players, decks, playerNames }) {
