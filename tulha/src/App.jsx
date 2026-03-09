@@ -1,24 +1,18 @@
 import { useState, useContext, createContext, useReducer, useCallback, useEffect } from "react";
 
-// ─── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
 function useWindowWidth() {
-  const [width, setWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
-  useEffect(() => {
-    const handler = () => setWidth(window.innerWidth);
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
-  }, []);
-  return width;
+  const [w, setW] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
+  useEffect(() => { const h = () => setW(window.innerWidth); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
+  return w;
 }
 
-// ─── CONTEXT ────────────────────────────────────────────────────────────────
 const GameContext = createContext(null);
 
 const SUITS = [
   { key: "hearts",   label: "Hearts",   symbol: "♥", color: "#e63946" },
   { key: "diamonds", label: "Diamonds", symbol: "♦", color: "#e05c67" },
-  { key: "clubs",    label: "Clubs",    symbol: "♣", color: "#d0e8ff" },
-  { key: "spades",   label: "Spades",   symbol: "♠", color: "#c8d8f0" },
+  { key: "clubs",    label: "Clubs",    symbol: "♣", color: "#a8c8ff" },
+  { key: "spades",   label: "Spades",   symbol: "♠", color: "#b8d0f0" },
 ];
 
 function buildInitialState({ players, decks, playerNames }) {
@@ -26,31 +20,38 @@ function buildInitialState({ players, decks, playerNames }) {
   const suits = {};
   SUITS.forEach(s => { suits[s.key] = { total: totalPerSuit, discarded: 0 }; });
   const playerStatus = {};
-  players.forEach((playerIdx) => {
-    playerStatus[playerIdx] = { hearts: true, diamonds: true, clubs: true, spades: true };
-  });
+  players.forEach(i => { playerStatus[i] = { hearts: true, diamonds: true, clubs: true, spades: true }; });
   return { players, playerNames, decks, suits, playerStatus, history: [], thullaLog: [] };
 }
 
 function reducer(state, action) {
   switch (action.type) {
     case "TRICK": {
-      const { suit } = action;
-      const s = state.suits[suit];
-      const rem = s.total - s.discarded;
-      const subtract = Math.min(state.players.length, rem);
-      if (subtract <= 0) return state;
-      const entry = { id: Date.now(), type: "trick", suit, count: subtract, ts: new Date().toLocaleTimeString() };
-      return { ...state, suits: { ...state.suits, [suit]: { ...s, discarded: s.discarded + subtract } }, history: [entry, ...state.history] };
+      const s = state.suits[action.suit];
+      const sub = Math.min(state.players.length, s.total - s.discarded);
+      if (sub <= 0) return state;
+      const e = { id: Date.now(), type: "trick", suit: action.suit, count: sub, ts: new Date().toLocaleTimeString() };
+      return { ...state, suits: { ...state.suits, [action.suit]: { ...s, discarded: s.discarded + sub } }, history: [e, ...state.history] };
     }
     case "THULLA": {
       const { playerIdx, ledSuit, thrownSuit } = action;
-      const entry = { id: Date.now(), type: "thulla", playerIdx, playerName: state.playerNames[playerIdx], ledSuit, thrownSuit, ts: new Date().toLocaleTimeString() };
+      const e = { id: Date.now(), type: "thulla", playerIdx, playerName: state.playerNames[playerIdx], ledSuit, thrownSuit, ts: new Date().toLocaleTimeString() };
       return {
         ...state,
         playerStatus: { ...state.playerStatus, [playerIdx]: { ...state.playerStatus[playerIdx], [ledSuit]: false } },
-        thullaLog: [entry, ...state.thullaLog],
-        history: [entry, ...state.history],
+        thullaLog: [e, ...state.thullaLog],
+        history: [e, ...state.history],
+      };
+    }
+    case "REMOVE_PLAYER": {
+      const { playerIdx } = action;
+      const e = { id: Date.now(), type: "remove", playerIdx, playerName: state.playerNames[playerIdx], ts: new Date().toLocaleTimeString() };
+      const newPlayers = state.players.filter(i => i !== playerIdx);
+      // Recalculate suits: each trick now removes one fewer card
+      return {
+        ...state,
+        players: newPlayers,
+        history: [e, ...state.history],
       };
     }
     case "UNDO": {
@@ -68,173 +69,106 @@ function reducer(state, action) {
           history: rest,
         };
       }
+      if (last.type === "remove") {
+        return { ...state, players: [...state.players, last.playerIdx].sort((a,b)=>a-b), history: rest };
+      }
       return state;
     }
     default: return state;
   }
 }
 
-function remCards(suit) { return suit.total - suit.discarded; }
-function pct(suit) { return remCards(suit) / suit.total; }
+const rem = s => s.total - s.discarded;
+const pct = s => rem(s) / s.total;
 
-// ─── SETUP PAGE ──────────────────────────────────────────────────────────────
+// ─── SETUP ───────────────────────────────────────────────────────────────────
 function SetupPage({ onStart }) {
   const [numPlayers, setNumPlayers] = useState(4);
   const [numDecks, setNumDecks] = useState(1);
   const [names, setNames] = useState(["Player 1","Player 2","Player 3","Player 4"]);
   const w = useWindowWidth();
-  const isDesktop = w >= 900;
+  const isDesktop = w >= 768;
 
-  const handlePlayers = v => {
-    const n = Math.max(4, Math.min(7, parseInt(v) || 4));
+  const setPlayers = v => {
+    const n = Math.max(4, Math.min(7, +v || 4));
     setNumPlayers(n);
-    setNames(prev => {
-      const arr = [...prev];
-      while (arr.length < n) arr.push(`Player ${arr.length + 1}`);
-      return arr.slice(0, n);
-    });
-  };
-
-  const handleSubmit = () => {
-    onStart({ players: Array.from({ length: numPlayers }, (_, i) => i), playerNames: names, decks: numDecks });
+    setNames(p => { const a = [...p]; while (a.length < n) a.push(`Player ${a.length+1}`); return a.slice(0,n); });
   };
 
   return (
-    <div style={{
-      minHeight: "100vh", width: "100%",
-      background: "linear-gradient(135deg, #050e1a 0%, #0a1a2e 50%, #050e1a 100%)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      fontFamily: "'Georgia', serif", padding: isDesktop ? "40px" : "20px",
-      boxSizing: "border-box",
-    }}>
-      <div style={{
-        position: "fixed", inset: 0, opacity: 0.035,
-        backgroundImage: "repeating-linear-gradient(45deg, #fff 0, #fff 1px, transparent 0, transparent 50%)",
-        backgroundSize: "6px 6px", pointerEvents: "none",
-      }}/>
+    <div style={{ minHeight:"100vh", background:"#060d18", display:"flex", alignItems:"center", justifyContent:"center", padding:20, fontFamily:"'Georgia',serif" }}>
+      <div style={{ width:"100%", maxWidth: isDesktop ? 860 : 440 }}>
 
-      <div style={{
-        width: "100%", maxWidth: isDesktop ? 960 : 560,
-        display: isDesktop ? "grid" : "block",
-        gridTemplateColumns: isDesktop ? "1fr 1fr" : undefined,
-        background: "linear-gradient(160deg, #0f2340 0%, #0b1a30 100%)",
-        border: "1px solid #c9a84c55",
-        borderRadius: 24, overflow: "hidden",
-        boxShadow: "0 0 80px #000c, 0 0 160px #c9a84c18",
-        position: "relative",
-      }}>
-        {/* Left branding panel (desktop only) */}
-        {isDesktop && (
-          <div style={{
-            background: "linear-gradient(160deg, #0a1628, #061020)",
-            borderRight: "1px solid #c9a84c33",
-            padding: "60px 48px",
-            display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
-          }}>
-            <div style={{ fontSize: 68, letterSpacing: 8, marginBottom: 24, textAlign: "center", lineHeight: 1.2 }}>
-              <span style={{ color: "#e63946" }}>♥</span>
-              <span style={{ color: "#d0e8ff", marginLeft: 8 }}>♠</span>
-              <br/>
-              <span style={{ color: "#e05c67" }}>♦</span>
-              <span style={{ color: "#c8d8f0", marginLeft: 8 }}>♣</span>
+        {/* Title */}
+        <div style={{ textAlign:"center", marginBottom:40 }}>
+          <div style={{ fontSize: isDesktop ? 52 : 40, letterSpacing:6, marginBottom:8 }}>
+            <span style={{color:"#e63946"}}>♥</span>
+            <span style={{color:"#e05c67",marginLeft:6}}>♦</span>
+            <span style={{color:"#a8c8ff",marginLeft:6}}>♣</span>
+            <span style={{color:"#b8d0f0",marginLeft:6}}>♠</span>
+          </div>
+          <h1 style={{ color:"#c9a84c", fontSize: isDesktop ? 36 : 28, margin:0, letterSpacing:6, fontWeight:"bold" }}>THULLA TRACKER</h1>
+          <p style={{ color:"#2a4060", fontSize:12, marginTop:6, letterSpacing:3 }}>CARD GAME COMPANION</p>
+        </div>
+
+        <div style={{ display: isDesktop ? "grid" : "flex", flexDirection:"column", gridTemplateColumns:"1fr 1fr", gap:24 }}>
+
+          {/* Left */}
+          <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+            <div>
+              <label style={lbl}>PLAYERS</label>
+              <div style={{ display:"flex", gap:10 }}>
+                {[4,5,6,7].map(n => (
+                  <button key={n} onClick={() => setPlayers(n)} style={{
+                    flex:1, padding:"14px 0", borderRadius:10, fontFamily:"'Georgia',serif",
+                    background: numPlayers===n ? "linear-gradient(135deg,#c9a84c,#9a6e20)" : "#0d1e33",
+                    color: numPlayers===n ? "#060d18" : "#4a6a8a",
+                    border: numPlayers===n ? "none" : "1px solid #1a2a3a",
+                    fontSize:18, fontWeight:"bold", cursor:"pointer",
+                  }}>{n}</button>
+                ))}
+              </div>
             </div>
-            <h1 style={{ color: "#c9a84c", fontSize: 34, fontWeight: "bold", margin: 0, letterSpacing: 4, textAlign: "center", lineHeight: 1.3 }}>
-              THULLA<br/>TRACKER
-            </h1>
-            <p style={{ color: "#4a6a8a", fontSize: 12, marginTop: 12, letterSpacing: 2, textAlign: "center" }}>CARD GAME COMPANION</p>
-            <div style={{ marginTop: 36, padding: "18px 22px", background: "#ffffff07", borderRadius: 12, border: "1px solid #c9a84c22", maxWidth: 220 }}>
-              <p style={{ color: "#5a7a9a", fontSize: 12, lineHeight: 1.8, margin: 0 }}>
-                Track suits, discards, Thullas, and player status in real time during gameplay.
+
+            <div>
+              <label style={lbl}>DECKS</label>
+              <div style={{ display:"flex", gap:10 }}>
+                {[1,2,3].map(n => (
+                  <button key={n} onClick={() => setNumDecks(n)} style={{
+                    flex:1, padding:"14px 0", borderRadius:10, fontFamily:"'Georgia',serif",
+                    background: numDecks===n ? "linear-gradient(135deg,#c9a84c,#9a6e20)" : "#0d1e33",
+                    color: numDecks===n ? "#060d18" : "#4a6a8a",
+                    border: numDecks===n ? "none" : "1px solid #1a2a3a",
+                    fontSize:18, fontWeight:"bold", cursor:"pointer",
+                  }}>{n}</button>
+                ))}
+              </div>
+              <p style={{ color:"#2a4060", fontSize:11, marginTop:8 }}>
+                {numDecks} deck{numDecks>1?"s":""} · {numDecks*52} cards · {numDecks*13} per suit
               </p>
             </div>
           </div>
-        )}
 
-        {/* Form panel */}
-        <div style={{ padding: isDesktop ? "48px 48px" : "36px 24px", position: "relative" }}>
-          {!isDesktop && (
-            <div style={{ textAlign: "center", marginBottom: 28 }}>
-              <div style={{ fontSize: 30, marginBottom: 8 }}>
-                <span style={{ color: "#e63946" }}>♥ </span>
-                <span style={{ color: "#e05c67" }}>♦ </span>
-                <span style={{ color: "#d0e8ff" }}>♣ </span>
-                <span style={{ color: "#c8d8f0" }}>♠</span>
-              </div>
-              <h1 style={{ color: "#c9a84c", fontSize: 24, fontWeight: "bold", margin: 0, letterSpacing: 3 }}>THULLA TRACKER</h1>
-              <p style={{ color: "#4a6a8a", fontSize: 11, marginTop: 5, letterSpacing: 1 }}>CARD GAME COMPANION</p>
-            </div>
-          )}
-
-          {isDesktop && (
-            <div style={{ marginBottom: 32 }}>
-              <h2 style={{ color: "#c9a84c", margin: 0, fontSize: 20, letterSpacing: 2 }}>GAME SETUP</h2>
-              <div style={{ width: 40, height: 2, background: "linear-gradient(90deg, #c9a84c, transparent)", marginTop: 8 }}/>
-            </div>
-          )}
-
-          {/* Players */}
-          <div style={{ marginBottom: 22 }}>
-            <label style={labelStyle}>NUMBER OF PLAYERS</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <button onClick={() => handlePlayers(numPlayers - 1)} style={stepBtn}>−</button>
-              <input type="number" min={4} max={7} value={numPlayers}
-                onChange={e => handlePlayers(e.target.value)}
-                style={{ ...inputStyle, fontSize: isDesktop ? 22 : 18, width: isDesktop ? 100 : 80 }}
-              />
-              <button onClick={() => handlePlayers(numPlayers + 1)} style={stepBtn}>+</button>
-              <span style={{ color: "#3a5060", fontSize: 12 }}>(4 – 7)</span>
-            </div>
-          </div>
-
-          {/* Decks */}
-          <div style={{ marginBottom: 22 }}>
-            <label style={labelStyle}>NUMBER OF DECKS</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <button onClick={() => setNumDecks(Math.max(1, numDecks - 1))} style={stepBtn}>−</button>
-              <input type="number" min={1} max={6} value={numDecks}
-                onChange={e => setNumDecks(Math.max(1, parseInt(e.target.value) || 1))}
-                style={{ ...inputStyle, fontSize: isDesktop ? 22 : 18, width: isDesktop ? 100 : 80 }}
-              />
-              <button onClick={() => setNumDecks(Math.min(6, numDecks + 1))} style={stepBtn}>+</button>
-            </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {[{ label: "Total Cards", value: numDecks * 52 }, { label: "Per Suit", value: numDecks * 13 }].map(stat => (
-                <div key={stat.label} style={{ background: "#ffffff07", borderRadius: 8, padding: "6px 14px", border: "1px solid #c9a84c1a" }}>
-                  <span style={{ color: "#c9a84c", fontWeight: "bold", fontSize: 15 }}>{stat.value}</span>
-                  <span style={{ color: "#3a5060", fontSize: 11, marginLeft: 6 }}>{stat.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Player names */}
-          <div style={{ marginBottom: 30 }}>
-            <label style={labelStyle}>PLAYER NAMES</label>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: isDesktop && numPlayers > 4 ? "1fr 1fr" : "1fr",
-              gap: 10,
-            }}>
-              {names.map((n, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{
-                    color: "#c9a84c", width: 26, height: 26, borderRadius: "50%",
-                    background: "#c9a84c1a", display: "flex", alignItems: "center",
-                    justifyContent: "center", fontSize: 11, fontWeight: "bold", flexShrink: 0,
-                  }}>{i + 1}</span>
-                  <input value={n}
-                    onChange={e => { const arr = [...names]; arr[i] = e.target.value; setNames(arr); }}
-                    style={{ ...inputStyle, flex: 1, width: "auto", textAlign: "left", paddingLeft: 14, fontSize: 14 }}
+          {/* Right — names */}
+          <div>
+            <label style={lbl}>PLAYER NAMES</label>
+            <div style={{ display:"grid", gridTemplateColumns: numPlayers > 4 ? "1fr 1fr" : "1fr", gap:8 }}>
+              {names.map((n,i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ color:"#c9a84c", fontSize:12, width:16 }}>{i+1}</span>
+                  <input value={n} onChange={e => { const a=[...names]; a[i]=e.target.value; setNames(a); }}
+                    style={{ flex:1, background:"#0d1e33", border:"1px solid #1a2a3a", color:"#d8ccc0", borderRadius:8, padding:"10px 12px", fontFamily:"'Georgia',serif", fontSize:14, outline:"none" }}
                   />
                 </div>
               ))}
             </div>
           </div>
-
-          <button onClick={handleSubmit} style={{ ...primaryBtn, fontSize: isDesktop ? 17 : 15, padding: isDesktop ? "16px" : "14px" }}>
-            ▶ &nbsp; START GAME
-          </button>
         </div>
+
+        <button onClick={() => onStart({ players: Array.from({length:numPlayers},(_,i)=>i), playerNames:names, decks:numDecks })}
+          style={{ width:"100%", marginTop:32, padding:"16px", background:"linear-gradient(135deg,#c9a84c,#9a6e20)", color:"#060d18", border:"none", borderRadius:12, fontWeight:"bold", fontSize:17, cursor:"pointer", fontFamily:"'Georgia',serif", letterSpacing:2, boxShadow:"0 4px 24px #c9a84c33" }}>
+          ▶ &nbsp; START GAME
+        </button>
       </div>
     </div>
   );
@@ -245,786 +179,601 @@ function Dashboard({ onReset }) {
   const { state, dispatch } = useContext(GameContext);
   const w = useWindowWidth();
   const isDesktop = w >= 900;
-  const [tab, setTab] = useState("players");
-  const [thullaForm, setThullaForm] = useState({ playerIdx: 0, ledSuit: "hearts", thrownSuit: "clubs" });
-  const [showThullaModal, setShowThullaModal] = useState(false);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [activeTab, setActiveTab] = useState("suits");
+  const [showReset, setShowReset] = useState(false);
 
-  const totalRemaining = Object.values(state.suits).reduce((a, s) => a + remCards(s), 0);
-  const totalDiscarded = Object.values(state.suits).reduce((a, s) => a + s.discarded, 0);
-  const totalCards = Object.values(state.suits).reduce((a, s) => a + s.total, 0);
-  const dangerSuit = SUITS.reduce((a, b) => pct(state.suits[a.key]) < pct(state.suits[b.key]) ? a : b);
+  // Quick Thulla — 2-tap: pick player, then pick their missing suit
+  const [thullaStep, setThullaStep] = useState(null); // null | { playerIdx }
+
+  const totalRem = Object.values(state.suits).reduce((a,s)=>a+rem(s),0);
+  const totalDisc = Object.values(state.suits).reduce((a,s)=>a+s.discarded,0);
+  const danger = SUITS.reduce((a,b) => pct(state.suits[a.key]) < pct(state.suits[b.key]) ? a : b);
+
+  const handleQuickThulla = (playerIdx, ledSuit) => {
+    // Auto-detect thrown suit: first suit player still has that isn't the led suit
+    const thrownSuit = SUITS.find(s => s.key !== ledSuit && state.playerStatus[playerIdx][s.key])?.key || "clubs";
+    dispatch({ type:"THULLA", playerIdx, ledSuit, thrownSuit });
+    setThullaStep(null);
+  };
 
   return (
-    <div style={{
-      minHeight: "100vh", width: "100vw", maxWidth: "100vw", overflowX: "hidden",
-      background: "linear-gradient(160deg, #050e1a 0%, #081520 100%)",
-      fontFamily: "'Georgia', serif", color: "#e8dcc8",
-      display: "flex", flexDirection: "column",
-    }}>
-      <div style={{
-        position: "fixed", inset: 0, opacity: 0.03,
-        backgroundImage: "repeating-linear-gradient(45deg, #fff 0, #fff 1px, transparent 0, transparent 50%)",
-        backgroundSize: "6px 6px", pointerEvents: "none", zIndex: 0,
-      }}/>
+    <div style={{ minHeight:"100vh", width:"100vw", maxWidth:"100vw", overflowX:"hidden", background:"#060d18", fontFamily:"'Georgia',serif", color:"#d8ccc0", display:"flex", flexDirection:"column" }}>
+      <style>{`
+        * { box-sizing: border-box; }
+        body, html, #root { margin:0; padding:0; width:100%; background:#060d18; }
+        .suit-btn:active { transform: scale(0.94); }
+        .player-btn:active { transform: scale(0.96); }
+        @keyframes pop { 0%{transform:scale(1)} 50%{transform:scale(1.08)} 100%{transform:scale(1)} }
+        .pop { animation: pop 0.2s ease; }
+      `}</style>
 
-      {/* HEADER */}
-      <div style={{
-        background: "linear-gradient(90deg, #07132200, #0f2340, #071322)",
-        borderBottom: "1px solid #c9a84c44",
-        padding: isDesktop ? "16px 40px" : "12px 16px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        position: "sticky", top: 0, zIndex: 100,
-        boxShadow: "0 4px 24px #000c", width: "100%", boxSizing: "border-box",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: isDesktop ? 16 : 10 }}>
-          <div style={{ fontSize: isDesktop ? 26 : 20 }}>
-            <span style={{ color: "#e63946" }}>♥</span>
-            <span style={{ color: "#d0e8ff", marginLeft: 3 }}>♠</span>
-          </div>
-          <div>
-            <div style={{ color: "#c9a84c", fontWeight: "bold", fontSize: isDesktop ? 20 : 16, letterSpacing: 2 }}>THULLA TRACKER</div>
-            <div style={{ color: "#3a5a6a", fontSize: isDesktop ? 11 : 9 }}>
-              {state.players.length} players · {state.decks} deck{state.decks > 1?"s":""} · {totalCards} cards
-            </div>
+      {/* ── HEADER ── */}
+      <div style={{ background:"#080f1e", borderBottom:"1px solid #c9a84c22", padding: isDesktop ? "12px 32px" : "10px 14px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:100 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ color:"#e63946", fontSize:18 }}>♥</span>
+          <span style={{ color:"#b8d0f0", fontSize:18 }}>♠</span>
+          <div style={{ marginLeft:4 }}>
+            <div style={{ color:"#c9a84c", fontWeight:"bold", fontSize: isDesktop ? 18 : 15, letterSpacing:2 }}>THULLA TRACKER</div>
+            <div style={{ color:"#1e3050", fontSize:10 }}>{state.players.length} active · {state.decks}deck · {state.decks*52} cards</div>
           </div>
         </div>
-        <div style={{ display: "flex", gap: isDesktop ? 10 : 6, alignItems: "center" }}>
-          <button onClick={() => dispatch({ type: "UNDO" })} style={iconBtn("#8aa0be", isDesktop)}>
-            ↩ {isDesktop ? "Undo" : ""}
-          </button>
-          <button onClick={() => setShowThullaModal(true)} style={{
-            background: "linear-gradient(135deg, #c9a84c, #9a6e20)",
-            color: "#060f1c", border: "none", borderRadius: 10,
-            padding: isDesktop ? "10px 22px" : "8px 14px",
-            fontWeight: "bold", fontSize: isDesktop ? 14 : 12,
-            cursor: "pointer", fontFamily: "'Georgia', serif",
-            boxShadow: "0 3px 14px #c9a84c44", whiteSpace: "nowrap",
-          }}>
-            ✂ {isDesktop ? "Record Thulla" : "Thulla"}
-          </button>
-          <button onClick={() => setShowResetConfirm(true)} style={iconBtn("#e63946", isDesktop)}>
-            ↺ {isDesktop ? "Reset" : ""}
-          </button>
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={() => dispatch({type:"UNDO"})} style={hdrBtn("#4a6a8a")}>↩</button>
+          <button onClick={() => setShowReset(true)} style={hdrBtn("#e63946")}>↺</button>
         </div>
       </div>
 
-      {/* STATS STRIP */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: isDesktop ? "repeat(4,1fr)" : "repeat(3,1fr)",
-        background: "#040c16", borderBottom: "1px solid #c9a84c1a",
-        width: "100%",
-      }}>
+      {/* ── STAT BAR ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", background:"#04090f", borderBottom:"1px solid #0e1e2e" }}>
         {[
-          { label: "Remaining", value: totalRemaining, color: "#4ade80" },
-          { label: "Discarded", value: totalDiscarded, color: "#c9a84c" },
-          { label: "Danger Suit", value: `${dangerSuit.symbol} ${dangerSuit.label}`, color: "#e63946" },
-          ...(isDesktop ? [{ label: "Thullas", value: state.thullaLog.length, color: "#a78bfa" }] : []),
-        ].map((s, i, arr) => (
-          <div key={s.label} style={{
-            padding: isDesktop ? "16px 10px" : "10px 6px", textAlign: "center",
-            borderRight: i < arr.length - 1 ? "1px solid #c9a84c18" : "none",
-          }}>
-            <div style={{ color: s.color, fontSize: isDesktop ? 24 : 18, fontWeight: "bold" }}>{s.value}</div>
-            <div style={{ color: "#3a5060", fontSize: isDesktop ? 11 : 9, letterSpacing: 1 }}>{s.label.toUpperCase()}</div>
+          { label:"REMAINING", val:totalRem, color:"#4ade80" },
+          { label:"DISCARDED", val:totalDisc, color:"#c9a84c" },
+          { label:"DANGER", val:`${danger.symbol} ${danger.label}`, color:"#e63946" },
+        ].map((s,i,a) => (
+          <div key={s.label} style={{ padding: isDesktop?"14px 8px":"10px 4px", textAlign:"center", borderRight: i<a.length-1?"1px solid #0e1e2e":"none" }}>
+            <div style={{ color:s.color, fontSize: isDesktop?22:18, fontWeight:"bold" }}>{s.val}</div>
+            <div style={{ color:"#1e3050", fontSize:9, letterSpacing:1 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* MAIN LAYOUT */}
-      <div style={{
-        flex: 1, position: "relative", zIndex: 1,
-        display: isDesktop ? "grid" : "flex",
-        flexDirection: "column",
-        gridTemplateColumns: isDesktop ? "1fr minmax(340px, 32vw)" : undefined,
-        width: "100%", minWidth: 0,
-      }}>
-
-        {/* ── DESKTOP LEFT: Suits grid always visible ── */}
-        {isDesktop ? (
-          <div style={{ padding: "28px 32px 28px 40px", overflowY: "auto", minWidth: 0 }}>
-            <div style={{ color: "#3a5060", fontSize: 10, letterSpacing: 2, marginBottom: 16 }}>SUIT TRACKER</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 28 }}>
-              {SUITS.map(suit => <SuitCard key={suit.key} suit={suit} isDesktop={true} />)}
-            </div>
-
-            {/* Tabs below suits on desktop */}
-            <div style={{ borderTop: "1px solid #c9a84c1a", paddingTop: 24 }}>
-              <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
-                {[{ id: "players", label: "👤 Players" }, { id: "history", label: "📜 History" }, { id: "advisor", label: "🧠 Advisor" }].map(t => (
-                  <button key={t.id} onClick={() => setTab(t.id)} style={{
-                    padding: "10px 22px", background: tab === t.id ? "#0d1e33" : "transparent",
-                    color: tab === t.id ? "#c9a84c" : "#3a5060",
-                    border: "none", borderBottom: tab === t.id ? "2px solid #c9a84c" : "2px solid transparent",
-                    cursor: "pointer", fontSize: 13, fontFamily: "'Georgia', serif",
-                  }}>{t.label}</button>
-                ))}
-              </div>
-              {tab === "players" && <PlayersTab isDesktop={true} />}
-              {tab === "history" && <HistoryTab />}
-              {tab === "advisor" && <AdvisorTab isDesktop={true} />}
-            </div>
+      {/* ── QUICK THULLA OVERLAY ── */}
+      {thullaStep && (
+        <div style={{ background:"#0a0418", borderBottom:"2px solid #e63946", padding:"12px 16px" }}>
+          <div style={{ color:"#e63946", fontSize:11, letterSpacing:2, marginBottom:10 }}>
+            ✂ {state.playerNames[thullaStep.playerIdx].toUpperCase()} — PICK THE SUIT THEY COULDN'T FOLLOW
           </div>
-        ) : (
-          /* ── MOBILE: Tabs ── */
-          <>
-            <div style={{ display: "flex", background: "#040c16", borderBottom: "1px solid #c9a84c1a" }}>
-              {[{ id: "suits", label: "♠ Suits" }, { id: "players", label: "👤 Players" }, { id: "history", label: "📜 History" }, { id: "advisor", label: "🧠 Advisor" }].map(t => (
-                <button key={t.id} onClick={() => setTab(t.id)} style={{
-                  flex: 1, padding: "12px 6px",
-                  background: tab === t.id ? "#0d1e33" : "transparent",
-                  color: tab === t.id ? "#c9a84c" : "#3a5060",
-                  border: "none", borderBottom: tab === t.id ? "2px solid #c9a84c" : "2px solid transparent",
-                  cursor: "pointer", fontSize: 12, fontFamily: "'Georgia', serif",
-                }}>{t.label}</button>
-              ))}
-            </div>
-            <div style={{ padding: "16px" }}>
-              {tab === "suits" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {SUITS.map(suit => <SuitCard key={suit.key} suit={suit} isDesktop={false} />)}
-                </div>
-              )}
-              {tab === "players" && <PlayersTab isDesktop={false} />}
-              {tab === "history" && <HistoryTab />}
-              {tab === "advisor" && <AdvisorTab isDesktop={false} />}
-            </div>
-          </>
-        )}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+            {SUITS.map(s => (
+              <button key={s.key} onClick={() => handleQuickThulla(thullaStep.playerIdx, s.key)}
+                className="suit-btn"
+                style={{ background:`${s.color}18`, border:`2px solid ${s.color}66`, borderRadius:10, padding:"12px 8px", cursor:"pointer", fontFamily:"'Georgia',serif", textAlign:"center" }}>
+                <div style={{ fontSize:24, color:s.color }}>{s.symbol}</div>
+                <div style={{ color:s.color, fontSize:10, marginTop:3 }}>{s.label}</div>
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setThullaStep(null)} style={{ marginTop:10, background:"transparent", border:"none", color:"#2a3a4a", fontSize:12, cursor:"pointer", fontFamily:"'Georgia',serif" }}>
+            × cancel
+          </button>
+        </div>
+      )}
 
-        {/* ── DESKTOP RIGHT SIDEBAR ── */}
+      {/* ── MAIN ── */}
+      <div style={{ flex:1, display: isDesktop?"grid":"flex", flexDirection:"column", gridTemplateColumns: isDesktop?"1fr 320px":undefined, width:"100%" }}>
+
+        {/* LEFT / MAIN CONTENT */}
+        <div style={{ minWidth:0 }}>
+
+          {/* Tab bar */}
+          <div style={{ display:"flex", background:"#04090f", borderBottom:"1px solid #0e1e2e" }}>
+            {[
+              { id:"suits", label: isDesktop ? "♠ Suits" : "♠" },
+              { id:"thulla", label: isDesktop ? "✂ Thulla" : "✂" },
+              { id:"players", label: isDesktop ? "👤 Players" : "👤" },
+              { id:"advisor", label: isDesktop ? "🧠 Advisor" : "🧠" },
+            ].map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+                flex:1, padding: isDesktop?"12px 8px":"14px 6px",
+                background: activeTab===t.id ? "#0d1e33" : "transparent",
+                color: activeTab===t.id ? "#c9a84c" : "#2a4060",
+                border:"none", borderBottom: activeTab===t.id?"2px solid #c9a84c":"2px solid transparent",
+                cursor:"pointer", fontSize: isDesktop?13:16, fontFamily:"'Georgia',serif",
+              }}>{t.label}</button>
+            ))}
+          </div>
+
+          <div style={{ padding: isDesktop?"24px 28px 24px 32px":"12px" }}>
+            {activeTab==="suits"    && <SuitsTab isDesktop={isDesktop} />}
+            {activeTab==="thulla"   && <ThullaTab isDesktop={isDesktop} onStartThulla={p => setThullaStep({playerIdx:p})} />}
+            {activeTab==="players"  && <PlayersTab isDesktop={isDesktop} />}
+            {activeTab==="advisor"  && <AdvisorTab isDesktop={isDesktop} />}
+          </div>
+        </div>
+
+        {/* RIGHT SIDEBAR — desktop only */}
         {isDesktop && (
-          <div style={{
-            borderLeft: "1px solid #c9a84c1a",
-            padding: "28px 32px",
-            overflowY: "auto",
-            background: "#040c1688",
-            minWidth: 0,
-          }}>
-            <div style={{ color: "#3a5060", fontSize: 10, letterSpacing: 2, marginBottom: 16 }}>SUIT PROGRESS</div>
+          <div style={{ borderLeft:"1px solid #0e1e2e", padding:"24px 24px", overflowY:"auto", background:"#04090f88", minWidth:0 }}>
+
+            <div style={{ color:"#1e3050", fontSize:10, letterSpacing:2, marginBottom:14 }}>SUIT PROGRESS</div>
             {SUITS.map(suit => {
               const s = state.suits[suit.key];
-              const rem = remCards(s);
-              const p = pct(s);
+              const r = rem(s); const p = pct(s);
               return (
-                <div key={suit.key} style={{ marginBottom: 18 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                    <span style={{ color: suit.color, fontSize: 14 }}>{suit.symbol} {suit.label}</span>
-                    <span style={{ color: p < 0.3 ? "#e63946" : "#4ade80", fontSize: 13, fontWeight: "bold" }}>
-                      {rem} / {s.total}
-                    </span>
+                <div key={suit.key} style={{ marginBottom:16 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <span style={{ color:suit.color, fontSize:13 }}>{suit.symbol} {suit.label}</span>
+                    <span style={{ color: p<0.3?"#e63946":"#4ade80", fontSize:12, fontWeight:"bold" }}>{r}/{s.total}</span>
                   </div>
-                  <div style={{ background: "#060f1c", borderRadius: 6, height: 10, overflow: "hidden" }}>
-                    <div style={{
-                      height: "100%", borderRadius: 6, width: `${p * 100}%`,
-                      background: p < 0.3 ? "linear-gradient(90deg,#e63946,#ff6b7a)" : `linear-gradient(90deg,${suit.color}44,${suit.color})`,
-                      transition: "width 0.5s ease",
-                    }}/>
+                  <div style={{ background:"#060d18", borderRadius:4, height:8, overflow:"hidden" }}>
+                    <div style={{ height:"100%", borderRadius:4, width:`${p*100}%`, background: p<0.3?"linear-gradient(90deg,#e63946,#ff6b7a)":`linear-gradient(90deg,${suit.color}44,${suit.color})`, transition:"width 0.4s" }}/>
                   </div>
-                  {p < 0.3 && <div style={{ color: "#e63946", fontSize: 10, marginTop: 3 }}>⚠ HIGH RISK — {Math.round(p*100)}% left</div>}
+                  {p<0.3 && <div style={{ color:"#e63946", fontSize:9, marginTop:2 }}>⚠ {Math.round(p*100)}% left</div>}
                 </div>
               );
             })}
 
-            <div style={{ borderTop: "1px solid #c9a84c1a", paddingTop: 22, marginTop: 8 }}>
-              <div style={{ color: "#3a5060", fontSize: 10, letterSpacing: 2, marginBottom: 14 }}>RECENT THULLAS</div>
-              {state.thullaLog.length === 0 ? (
-                <div style={{ color: "#1e2e3e", fontSize: 13 }}>No thullas yet.</div>
-              ) : state.thullaLog.slice(0, 7).map(t => {
-                const led = SUITS.find(s => s.key === t.ledSuit);
-                const thrown = SUITS.find(s => s.key === t.thrownSuit);
-                return (
-                  <div key={t.id} style={{
-                    background: "#0d1e30", border: "1px solid #e6394618",
-                    borderRadius: 8, padding: "8px 12px", marginBottom: 8, fontSize: 12,
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                      <span style={{ color: "#c8d8e8", fontWeight: "bold" }}>{t.playerName}</span>
-                      <span style={{ color: "#2a3a4a", fontSize: 10 }}>{t.ts}</span>
-                    </div>
-                    <span style={{ color: "#4a6a8a" }}>out of </span>
-                    <span style={{ color: led.color }}>{led.symbol} {led.label}</span>
-                    <span style={{ color: "#4a6a8a" }}> · threw </span>
-                    <span style={{ color: thrown.color }}>{thrown.symbol} {thrown.label}</span>
-                  </div>
-                );
-              })}
+            <div style={{ borderTop:"1px solid #0e1e2e", paddingTop:18, marginTop:8 }}>
+              <div style={{ color:"#1e3050", fontSize:10, letterSpacing:2, marginBottom:12 }}>THULLA LOG</div>
+              {state.thullaLog.length===0
+                ? <div style={{ color:"#0e1e2e", fontSize:12 }}>None yet.</div>
+                : state.thullaLog.slice(0,8).map(t => {
+                    const led = SUITS.find(s=>s.key===t.ledSuit);
+                    const thrown = SUITS.find(s=>s.key===t.thrownSuit);
+                    return (
+                      <div key={t.id} style={{ background:"#0a0418", border:"1px solid #e6394618", borderRadius:8, padding:"7px 10px", marginBottom:6, fontSize:11 }}>
+                        <span style={{ color:"#d8ccc0", fontWeight:"bold" }}>{t.playerName}</span>
+                        <span style={{ color:"#1e3050" }}> out of </span>
+                        <span style={{ color:led.color }}>{led.symbol}</span>
+                        <span style={{ color:"#1e3050" }}> → </span>
+                        <span style={{ color:thrown.color }}>{thrown.symbol}</span>
+                        <span style={{ color:"#0e1a28", float:"right" }}>{t.ts}</span>
+                      </div>
+                    );
+                  })
+              }
             </div>
           </div>
         )}
       </div>
 
-      {/* THULLA MODAL */}
-      {showThullaModal && (
-        <Modal onClose={() => setShowThullaModal(false)} isDesktop={isDesktop}>
-          <h3 style={{ color: "#c9a84c", marginTop: 0, letterSpacing: 2, fontSize: isDesktop ? 19 : 16, marginBottom: 20 }}>RECORD THULLA</h3>
-          <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>PLAYER</label>
-            <select value={thullaForm.playerIdx} onChange={e => setThullaForm(f => ({ ...f, playerIdx: +e.target.value }))} style={selectStyle}>
-              {state.players.map(i => <option key={i} value={i}>{state.playerNames[i]}</option>)}
-            </select>
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>LED SUIT (COULDN'T FOLLOW)</label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {SUITS.map(s => (
-                <button key={s.key} onClick={() => setThullaForm(f => ({ ...f, ledSuit: s.key }))} style={{
-                  background: thullaForm.ledSuit === s.key ? `${s.color}1a` : "#060f1c",
-                  border: thullaForm.ledSuit === s.key ? `2px solid ${s.color}` : "1px solid #c9a84c1a",
-                  color: thullaForm.ledSuit === s.key ? s.color : "#4a6a8a",
-                  borderRadius: 8, padding: "10px", cursor: "pointer",
-                  fontFamily: "'Georgia', serif", fontSize: 14, fontWeight: "bold",
-                }}>{s.symbol} {s.label}</button>
-              ))}
+      {/* RESET MODAL */}
+      {showReset && (
+        <div style={{ position:"fixed", inset:0, background:"#000c", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={() => setShowReset(false)}>
+          <div style={{ background:"#0d1e33", border:"1px solid #e6394644", borderRadius:16, padding:"28px 24px", width:"100%", maxWidth:340 }} onClick={e=>e.stopPropagation()}>
+            <h3 style={{ color:"#e63946", marginTop:0 }}>Reset Game?</h3>
+            <p style={{ color:"#3a5060", marginBottom:24 }}>All progress will be lost.</p>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <button onClick={() => setShowReset(false)} style={{ ...actionBtn, background:"transparent", border:"1px solid #1a2a3a", color:"#3a5060" }}>Cancel</button>
+              <button onClick={onReset} style={{ ...actionBtn, background:"linear-gradient(135deg,#e63946,#b02030)" }}>Reset</button>
             </div>
           </div>
-          <div style={{ marginBottom: 24 }}>
-            <label style={labelStyle}>SUIT THROWN</label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {SUITS.filter(s => s.key !== thullaForm.ledSuit).map(s => (
-                <button key={s.key} onClick={() => setThullaForm(f => ({ ...f, thrownSuit: s.key }))} style={{
-                  background: thullaForm.thrownSuit === s.key ? `${s.color}1a` : "#060f1c",
-                  border: thullaForm.thrownSuit === s.key ? `2px solid ${s.color}` : "1px solid #c9a84c1a",
-                  color: thullaForm.thrownSuit === s.key ? s.color : "#4a6a8a",
-                  borderRadius: 8, padding: "10px", cursor: "pointer",
-                  fontFamily: "'Georgia', serif", fontSize: 14, fontWeight: "bold",
-                }}>{s.symbol} {s.label}</button>
-              ))}
-            </div>
-          </div>
-          <button onClick={() => { dispatch({ type: "THULLA", ...thullaForm }); setShowThullaModal(false); }} style={primaryBtn}>
-            ✓ &nbsp; Record Thulla
-          </button>
-        </Modal>
-      )}
-
-      {/* RESET CONFIRM */}
-      {showResetConfirm && (
-        <Modal onClose={() => setShowResetConfirm(false)} isDesktop={isDesktop}>
-          <h3 style={{ color: "#e63946", marginTop: 0, fontSize: isDesktop ? 20 : 17 }}>Reset Game?</h3>
-          <p style={{ color: "#3a5a6a", marginBottom: 24, lineHeight: 1.7 }}>All tracked progress will be lost. This cannot be undone.</p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <button onClick={() => setShowResetConfirm(false)} style={{ ...primaryBtn, background: "transparent", border: "1px solid #3a5a6a", color: "#4a6a8a", boxShadow: "none" }}>Cancel</button>
-            <button onClick={onReset} style={{ ...primaryBtn, background: "linear-gradient(135deg, #e63946, #b02030)" }}>Reset</button>
-          </div>
-        </Modal>
+        </div>
       )}
     </div>
   );
 }
 
-// ─── SUIT CARD ───────────────────────────────────────────────────────────────
-function SuitCard({ suit, isDesktop }) {
+// ─── SUITS TAB ───────────────────────────────────────────────────────────────
+function SuitsTab({ isDesktop }) {
   const { state, dispatch } = useContext(GameContext);
-  const s = state.suits[suit.key];
-  const rem = remCards(s);
-  const p = pct(s);
-  const isRisk = p < 0.3;
+  return (
+    <div style={{ display:"grid", gridTemplateColumns: isDesktop?"1fr 1fr":"1fr 1fr", gap:12 }}>
+      {SUITS.map(suit => {
+        const s = state.suits[suit.key];
+        const r = rem(s); const p = pct(s);
+        const risk = p < 0.3;
+        return (
+          <button key={suit.key} className="suit-btn" onClick={() => dispatch({type:"TRICK", suit:suit.key})}
+            disabled={r<=0}
+            style={{
+              background: risk ? "linear-gradient(135deg,#1a0808,#120508)" : "linear-gradient(135deg,#0d1e33,#09172a)",
+              border: `2px solid ${risk ? "#e6394644" : "#c9a84c22"}`,
+              borderRadius:14, padding: isDesktop?"20px 18px":"16px 14px",
+              cursor: r<=0?"not-allowed":"pointer", textAlign:"left",
+              boxShadow: risk?"0 0 20px #e6394614":"none",
+              transition:"all 0.2s", display:"block", width:"100%",
+            }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+              <span style={{ fontSize: isDesktop?36:30, color:suit.color, lineHeight:1 }}>{suit.symbol}</span>
+              {risk && <span style={{ color:"#e63946", fontSize:10, fontWeight:"bold" }}>⚠ RISK</span>}
+            </div>
+            <div style={{ color:"#8a9ab0", fontSize:12, marginBottom:8 }}>{suit.label}</div>
+            <div style={{ background:"#060d18", borderRadius:4, height:5, marginBottom:10, overflow:"hidden" }}>
+              <div style={{ height:"100%", borderRadius:4, width:`${p*100}%`, background: risk?"#e63946":suit.color, transition:"width 0.4s" }}/>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div>
+                <span style={{ color: risk?"#e63946":"#4ade80", fontSize: isDesktop?22:20, fontWeight:"bold" }}>{r}</span>
+                <span style={{ color:"#1e3050", fontSize:11 }}> / {s.total}</span>
+              </div>
+              <div style={{ background: r<=0?"#0d1e33":`${suit.color}22`, border:`1px solid ${suit.color}44`, borderRadius:8, padding:"5px 10px", color: r<=0?"#1e3050":suit.color, fontSize:11, fontWeight:"bold" }}>
+                {r<=0 ? "DONE" : `−${state.players.length}`}
+              </div>
+            </div>
+            <div style={{ color:"#1e3050", fontSize:9, marginTop:6 }}>TAP TO RECORD TRICK</div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── THULLA TAB ──────────────────────────────────────────────────────────────
+// Ultra fast: tap player → tap led suit → done (2 taps total)
+function ThullaTab({ isDesktop, onStartThulla }) {
+  const { state, dispatch } = useContext(GameContext);
+  const [step, setStep] = useState(1); // 1=pick player, 2=pick suit
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+
+  const handlePlayer = (idx) => { setSelectedPlayer(idx); setStep(2); };
+  const handleSuit = (suitKey) => {
+    const thrownSuit = SUITS.find(s => s.key !== suitKey && state.playerStatus[selectedPlayer][s.key])?.key || "clubs";
+    dispatch({ type:"THULLA", playerIdx:selectedPlayer, ledSuit:suitKey, thrownSuit });
+    setStep(1); setSelectedPlayer(null);
+  };
 
   return (
-    <div style={{
-      background: "linear-gradient(135deg, #0d1e33, #09172a)",
-      border: `1px solid ${isRisk ? "#e6394655" : "#c9a84c22"}`,
-      borderRadius: 14, padding: isDesktop ? "20px 22px" : "14px 16px",
-      boxShadow: isRisk ? "0 0 28px #e6394614" : "0 2px 12px #00000033",
-      transition: "all 0.3s",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: isDesktop ? 30 : 26, color: suit.color, lineHeight: 1, textShadow: `0 0 12px ${suit.color}44` }}>{suit.symbol}</span>
-          <div>
-            <div style={{ fontWeight: "bold", fontSize: isDesktop ? 16 : 15, color: "#d8ccc0" }}>{suit.label}</div>
-            {isRisk
-              ? <div style={{ color: "#e63946", fontSize: 10, fontWeight: "bold" }}>⚠ HIGH RISK</div>
-              : <div style={{ color: "#2a3a4a", fontSize: 10 }}>{Math.round(p * 100)}% left</div>
-            }
-          </div>
-        </div>
-        <button
-          onClick={() => dispatch({ type: "TRICK", suit: suit.key })}
-          disabled={rem <= 0}
-          style={{
-            background: rem <= 0 ? "#0d1e33" : `linear-gradient(135deg, ${suit.color}cc, ${suit.color}88)`,
-            color: rem <= 0 ? "#2a3a4a" : "#fff",
-            border: `1px solid ${rem <= 0 ? "#1a2a3a" : suit.color + "66"}`,
-            borderRadius: 10, padding: isDesktop ? "10px 16px" : "8px 12px",
-            fontWeight: "bold", cursor: rem <= 0 ? "not-allowed" : "pointer",
-            fontSize: isDesktop ? 13 : 12, fontFamily: "'Georgia', serif",
-            boxShadow: rem > 0 ? `0 3px 10px ${suit.color}28` : "none",
-            whiteSpace: "nowrap", flexShrink: 0,
-          }}
-        >+ Trick <span style={{ opacity: 0.7 }}>({state.players.length})</span></button>
-      </div>
-
-      <div style={{ background: "#040c16", borderRadius: 6, height: 6, marginBottom: 10, overflow: "hidden" }}>
-        <div style={{
-          height: "100%", borderRadius: 6, width: `${p * 100}%`,
-          background: isRisk ? "linear-gradient(90deg,#e63946,#ff6b7a)" : `linear-gradient(90deg,${suit.color}44,${suit.color})`,
-          transition: "width 0.5s ease",
-        }}/>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 4 }}>
-        {[
-          { l: "Total", v: s.total, c: "#2a3a4a" },
-          { l: "Discarded", v: s.discarded, c: "#c9a84c" },
-          { l: "Remaining", v: rem, c: "#4ade80", bold: true },
-        ].map(({ l, v, c, bold }) => (
-          <div key={l} style={{ textAlign: "center", background: "#ffffff04", borderRadius: 6, padding: "6px 4px" }}>
-            <div style={{ color: c, fontWeight: bold ? "bold" : "normal", fontSize: bold ? (isDesktop ? 18 : 16) : (isDesktop ? 14 : 13) }}>{v}</div>
-            <div style={{ color: "#1e2e3e", fontSize: 9, letterSpacing: 0.5 }}>{l.toUpperCase()}</div>
+    <div>
+      {/* Step indicator */}
+      <div style={{ display:"flex", gap:8, marginBottom:20, alignItems:"center" }}>
+        {[{n:1,label:"Pick Player"},{n:2,label:"Pick Led Suit"}].map(s => (
+          <div key={s.n} style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div style={{ width:24, height:24, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:"bold",
+              background: step===s.n ? "linear-gradient(135deg,#c9a84c,#9a6e20)" : step>s.n ? "#1a3a1a" : "#0d1e33",
+              color: step===s.n ? "#060d18" : step>s.n ? "#4ade80" : "#2a4060",
+              border: step>s.n ? "1px solid #4ade8033" : "none",
+            }}>{step>s.n?"✓":s.n}</div>
+            <span style={{ color: step===s.n?"#c9a84c":"#2a4060", fontSize:11 }}>{s.label}</span>
+            {s.n<2 && <span style={{ color:"#1a2a3a", fontSize:16, marginLeft:4 }}>›</span>}
           </div>
         ))}
+        {step===2 && (
+          <button onClick={() => {setStep(1);setSelectedPlayer(null);}} style={{ marginLeft:"auto", background:"transparent", border:"none", color:"#2a4060", fontSize:12, cursor:"pointer", fontFamily:"'Georgia',serif" }}>← back</button>
+        )}
       </div>
+
+      {step===1 && (
+        <div>
+          <div style={{ color:"#2a4060", fontSize:11, letterSpacing:1, marginBottom:12 }}>WHO THREW THULLA? ({state.players.length} active players)</div>
+          <div style={{ display:"grid", gridTemplateColumns: isDesktop && state.players.length>4?"repeat(4,1fr)":"repeat(2,1fr)", gap:10 }}>
+            {state.players.map(i => (
+              <button key={i} onClick={() => handlePlayer(i)} className="player-btn"
+                style={{ background:"#0d1e33", border:"1px solid #1a2a3a", borderRadius:12, padding:"18px 12px", cursor:"pointer", fontFamily:"'Georgia',serif", textAlign:"center" }}>
+                <div style={{ color:"#d8ccc0", fontWeight:"bold", fontSize:15, marginBottom:6 }}>{state.playerNames[i]}</div>
+                <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
+                  {SUITS.map(s => (
+                    <span key={s.key} style={{ fontSize:14, color: state.playerStatus[i][s.key] ? s.color : "#1a2a3a" }}>{s.symbol}</span>
+                  ))}
+                </div>
+                <div style={{ color:"#1e3050", fontSize:9, marginTop:6 }}>TAP TO SELECT</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {step===2 && selectedPlayer!==null && (
+        <div>
+          <div style={{ background:"#0d1e33", border:"1px solid #c9a84c22", borderRadius:10, padding:"10px 14px", marginBottom:16, display:"flex", alignItems:"center", gap:10 }}>
+            <span style={{ color:"#c9a84c", fontSize:13 }}>Recording thulla for</span>
+            <span style={{ color:"#d8ccc0", fontWeight:"bold" }}>{state.playerNames[selectedPlayer]}</span>
+          </div>
+          <div style={{ color:"#2a4060", fontSize:11, letterSpacing:1, marginBottom:12 }}>WHICH SUIT WAS LED? (THEY COULDN'T FOLLOW)</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            {SUITS.map(s => (
+              <button key={s.key} onClick={() => handleSuit(s.key)} className="suit-btn"
+                style={{ background:`${s.color}0f`, border:`2px solid ${s.color}55`, borderRadius:14, padding:"20px 16px", cursor:"pointer", fontFamily:"'Georgia',serif", textAlign:"center" }}>
+                <div style={{ fontSize:36, color:s.color, marginBottom:6 }}>{s.symbol}</div>
+                <div style={{ color:s.color, fontSize:13, fontWeight:"bold" }}>{s.label}</div>
+                {!state.playerStatus[selectedPlayer][s.key] && (
+                  <div style={{ color:"#e63946", fontSize:9, marginTop:4 }}>ALREADY OUT</div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── PLAYERS TAB ─────────────────────────────────────────────────────────────
 function PlayersTab({ isDesktop }) {
-  const { state } = useContext(GameContext);
+  const { state, dispatch } = useContext(GameContext);
+  const [confirmRemove, setConfirmRemove] = useState(null); // playerIdx to confirm
+
   return (
     <div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: isDesktop ? 14 : 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #c9a84c22" }}>
-              <th style={{ color: "#3a5060", padding: isDesktop ? "12px 14px" : "10px 8px", textAlign: "left", fontSize: 10, letterSpacing: 1.5 }}>PLAYER</th>
-              {SUITS.map(s => (
-                <th key={s.key} style={{ color: s.color, padding: "10px 8px", textAlign: "center", fontSize: isDesktop ? 22 : 18 }}>{s.symbol}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {state.players.map(i => (
-              <tr key={i} style={{ borderBottom: "1px solid #0d1e2e" }}>
-                <td style={{ padding: isDesktop ? "14px 14px" : "12px 8px", color: "#d8ccc0", fontWeight: "bold", whiteSpace: "nowrap" }}>
-                  {state.playerNames[i]}
-                </td>
+      {/* Active players count badge */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ background:"#0d1e33", border:"1px solid #c9a84c33", borderRadius:20, padding:"4px 14px", color:"#c9a84c", fontSize:12, fontWeight:"bold" }}>
+            {state.players.length} Active Players
+          </span>
+          {state.players.length < 4 && (
+            <span style={{ color:"#e63946", fontSize:11 }}>⚠ Below minimum</span>
+          )}
+        </div>
+        <span style={{ color:"#1e3050", fontSize:11 }}>Tap ✕ to remove player</span>
+      </div>
+
+      {/* Player cards — one per player, big and easy to read */}
+      <div style={{ display:"grid", gridTemplateColumns: isDesktop && state.players.length > 3 ? "1fr 1fr" : "1fr", gap:10, marginBottom:24 }}>
+        {state.players.map(i => {
+          const allOut = SUITS.every(s => !state.playerStatus[i][s.key]);
+          const outCount = SUITS.filter(s => !state.playerStatus[i][s.key]).length;
+          const isConfirming = confirmRemove === i;
+          return (
+            <div key={i} style={{
+              background: allOut ? "linear-gradient(135deg,#1a0808,#120508)" : "linear-gradient(135deg,#0d1e33,#09172a)",
+              border: `1px solid ${allOut ? "#e6394644" : isConfirming ? "#e6394688" : "#1a2a3a"}`,
+              borderRadius:12, padding:"14px 16px",
+              boxShadow: allOut ? "0 0 16px #e6394614" : "none",
+              transition:"all 0.2s",
+            }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ width:32, height:32, borderRadius:"50%", background: allOut?"#e6394622":"#c9a84c22", border:`1px solid ${allOut?"#e6394644":"#c9a84c44"}`, display:"flex", alignItems:"center", justifyContent:"center", color: allOut?"#e63946":"#c9a84c", fontWeight:"bold", fontSize:13 }}>
+                    {i+1}
+                  </div>
+                  <div>
+                    <div style={{ color:"#d8ccc0", fontWeight:"bold", fontSize: isDesktop?15:14 }}>{state.playerNames[i]}</div>
+                    <div style={{ color: outCount===0?"#2a4060":outCount===1?"#f59e0b":"#e63946", fontSize:10, marginTop:1 }}>
+                      {outCount===0 ? "All suits active" : outCount===1 ? "1 suit out" : `${outCount} suits out`}
+                      {allOut && " · NO CARDS LEFT"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Remove button */}
+                {!isConfirming ? (
+                  <button onClick={() => setConfirmRemove(i)} style={{
+                    background:"#1a0808", border:"1px solid #e6394633", borderRadius:8,
+                    color:"#e63946", padding:"6px 10px", cursor:"pointer",
+                    fontFamily:"'Georgia',serif", fontSize:13, lineHeight:1,
+                  }}>✕</button>
+                ) : (
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={() => setConfirmRemove(null)} style={{
+                      background:"#0d1e33", border:"1px solid #1a2a3a", borderRadius:8,
+                      color:"#4a6a8a", padding:"6px 10px", cursor:"pointer",
+                      fontFamily:"'Georgia',serif", fontSize:12,
+                    }}>Keep</button>
+                    <button onClick={() => { dispatch({ type:"REMOVE_PLAYER", playerIdx:i }); setConfirmRemove(null); }} style={{
+                      background:"linear-gradient(135deg,#e63946,#b02030)", border:"none", borderRadius:8,
+                      color:"#fff", padding:"6px 12px", cursor:"pointer",
+                      fontFamily:"'Georgia',serif", fontSize:12, fontWeight:"bold",
+                    }}>Remove</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Suit status row */}
+              <div style={{ display:"flex", gap:8 }}>
                 {SUITS.map(s => {
                   const has = state.playerStatus[i][s.key];
                   return (
-                    <td key={s.key} style={{ padding: "10px 8px", textAlign: "center" }}>
-                      <div style={{
-                        display: "inline-flex", flexDirection: "column", alignItems: "center",
-                        background: has ? "#081a0a" : "#1a0808",
-                        border: `1px solid ${has ? "#4ade8022" : "#e6394622"}`,
-                        borderRadius: 8, padding: isDesktop ? "5px 12px" : "4px 8px", minWidth: 36,
-                      }}>
-                        <span style={{ fontSize: isDesktop ? 15 : 14, color: has ? "#4ade80" : "#e63946" }}>{has ? "✓" : "✗"}</span>
-                        <span style={{ fontSize: 8, color: has ? "#1a4a1a" : "#6a1a1a", letterSpacing: 0.5 }}>{has ? "HAS" : "OUT"}</span>
-                      </div>
-                    </td>
+                    <div key={s.key} style={{ flex:1, background: has?"#081a0a":"#1a0808", border:`1px solid ${has?"#4ade8018":"#e6394628"}`, borderRadius:8, padding:"6px 4px", textAlign:"center" }}>
+                      <div style={{ fontSize: isDesktop?18:16, color: has?s.color:"#2a1010" }}>{s.symbol}</div>
+                      <div style={{ fontSize:8, color: has?"#1a4a1a":"#4a1010", marginTop:2 }}>{has?"HAS":"OUT"}</div>
+                    </div>
                   );
                 })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!isDesktop && state.thullaLog.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <div style={{ color: "#3a5060", fontSize: 10, letterSpacing: 2, marginBottom: 12 }}>THULLA LOG</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {state.thullaLog.map(t => {
-              const led = SUITS.find(s => s.key === t.ledSuit);
-              const thrown = SUITS.find(s => s.key === t.thrownSuit);
-              return (
-                <div key={t.id} style={{ background: "#0d1e30", border: "1px solid #e6394618", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontSize: 12 }}>
-                    <span style={{ color: "#d8ccc0", fontWeight: "bold" }}>{t.playerName}</span>
-                    <span style={{ color: "#3a5060" }}> out of </span>
-                    <span style={{ color: led.color }}>{led.symbol}</span>
-                    <span style={{ color: "#3a5060" }}> · threw </span>
-                    <span style={{ color: thrown.color }}>{thrown.symbol}</span>
-                  </div>
-                  <div style={{ color: "#1e2e3e", fontSize: 10 }}>{t.ts}</div>
+              </div>
+
+              {/* "No cards" suggestion banner */}
+              {allOut && !isConfirming && (
+                <div style={{ marginTop:10, background:"#e6394618", border:"1px solid #e6394633", borderRadius:8, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ color:"#e63946", fontSize:11 }}>🚫 Out of all suits — no cards left?</span>
+                  <button onClick={() => setConfirmRemove(i)} style={{
+                    background:"#e63946", border:"none", borderRadius:6, color:"#fff",
+                    padding:"4px 10px", cursor:"pointer", fontFamily:"'Georgia',serif", fontSize:11, fontWeight:"bold",
+                  }}>Remove Player</button>
                 </div>
-              );
-            })}
-          </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Removed players list */}
+      {state.history.filter(h=>h.type==="remove").length > 0 && (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ color:"#1e3050", fontSize:10, letterSpacing:2, marginBottom:10 }}>REMOVED PLAYERS</div>
+          {state.history.filter(h=>h.type==="remove").map(h => (
+            <div key={h.id} style={{ background:"#080f1e", border:"1px solid #0e1e2e", borderRadius:8, padding:"8px 14px", marginBottom:6, display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12 }}>
+              <div>
+                <span style={{ color:"#e63946" }}>✕ </span>
+                <span style={{ color:"#4a6a8a" }}>{h.playerName}</span>
+                <span style={{ color:"#1e3050" }}> removed from game</span>
+              </div>
+              <span style={{ color:"#0e1a28", fontSize:10 }}>{h.ts}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Thulla log */}
+      {state.thullaLog.length > 0 && (
+        <div>
+          <div style={{ color:"#1e3050", fontSize:10, letterSpacing:2, marginBottom:10 }}>THULLA LOG</div>
+          {state.thullaLog.map(t => {
+            const led = SUITS.find(s=>s.key===t.ledSuit);
+            const thrown = SUITS.find(s=>s.key===t.thrownSuit);
+            return (
+              <div key={t.id} style={{ background:"#0a0418", border:"1px solid #e6394618", borderRadius:8, padding:"8px 12px", marginBottom:6, display:"flex", justifyContent:"space-between", fontSize:12 }}>
+                <div>
+                  <span style={{ color:"#d8ccc0", fontWeight:"bold" }}>{t.playerName}</span>
+                  <span style={{ color:"#2a4060" }}> out of </span>
+                  <span style={{ color:led.color }}>{led.symbol} {led.label}</span>
+                  <span style={{ color:"#2a4060" }}> · threw </span>
+                  <span style={{ color:thrown.color }}>{thrown.symbol} {thrown.label}</span>
+                </div>
+                <span style={{ color:"#0e1e2e", fontSize:10 }}>{t.ts}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-// ─── HISTORY TAB ─────────────────────────────────────────────────────────────
-function HistoryTab() {
-  const { state } = useContext(GameContext);
-  if (state.history.length === 0) {
-    return <div style={{ textAlign: "center", padding: 40, color: "#1e2e3e" }}>No actions recorded yet.</div>;
-  }
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {state.history.map(entry => {
-        if (entry.type === "trick") {
-          const suit = SUITS.find(s => s.key === entry.suit);
-          return (
-            <div key={entry.id} style={{ background: "#0d1e33", border: "1px solid #c9a84c18", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <span style={{ color: suit.color, fontSize: 18, marginRight: 8 }}>{suit.symbol}</span>
-                <span style={{ color: "#c8d8e8" }}>Trick — {suit.label}</span>
-                <span style={{ color: "#4ade80", marginLeft: 8, fontSize: 13 }}>−{entry.count} cards</span>
-              </div>
-              <div style={{ color: "#1e2e3e", fontSize: 11 }}>{entry.ts}</div>
-            </div>
-          );
-        }
-        if (entry.type === "thulla") {
-          const led = SUITS.find(s => s.key === entry.ledSuit);
-          return (
-            <div key={entry.id} style={{ background: "#180a10", border: "1px solid #e6394622", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <span style={{ color: "#e63946", marginRight: 8 }}>✂</span>
-                <span style={{ color: "#c8d8e8" }}>Thulla — {entry.playerName}</span>
-                <span style={{ color: "#3a5060" }}> out of </span>
-                <span style={{ color: led.color }}>{led.symbol} {led.label}</span>
-              </div>
-              <div style={{ color: "#1e2e3e", fontSize: 11 }}>{entry.ts}</div>
-            </div>
-          );
-        }
-        return null;
-      })}
-    </div>
-  );
-}
-
-
 // ─── ADVISOR TAB ─────────────────────────────────────────────────────────────
 function AdvisorTab({ isDesktop }) {
   const { state } = useContext(GameContext);
-  const [selectedPlayer, setSelectedPlayer] = useState(0);
+  const [selPlayer, setSelPlayer] = useState(0);
+  const n = state.players.length;
 
-  // ── LOGIC ENGINE ──
-  const suits = state.suits;
-  const playerStatus = state.playerStatus;
-  const numPlayers = state.players.length;
-
-  // For each suit: remaining cards, % left, danger level
-  const suitStats = SUITS.map(suit => {
-    const s = suits[suit.key];
-    const rem = remCards(s);
-    const p = pct(s);
-    const playersOut = state.players.filter(i => !playerStatus[i][suit.key]).length;
-    const playersIn  = numPlayers - playersOut;
-    // Probability someone at table is out of this suit
-    const outChance = playersOut / numPlayers;
-    // Danger: low cards + many players still in = risky to lead
-    const dangerScore = (1 - p) * 0.6 + outChance * 0.4;
-    return { ...suit, rem, p, playersOut, playersIn, dangerScore, s };
+  const stats = SUITS.map(suit => {
+    const s = state.suits[suit.key];
+    const r = rem(s); const p = pct(s);
+    const out = state.players.filter(i => !state.playerStatus[i][suit.key]).length;
+    const danger = (1-p)*0.6 + (out/n)*0.4;
+    return { ...suit, r, p, out, inCount:n-out, danger };
   });
 
-  // Best suit to LEAD (you want everyone to follow = discard cards)
-  // Ideal: high remaining %, few players out
-  const bestToLead = [...suitStats].sort((a, b) => {
-    const scoreA = a.p * 0.5 + (1 - a.playersOut / numPlayers) * 0.5;
-    const scoreB = b.p * 0.5 + (1 - b.playersOut / numPlayers) * 0.5;
-    return scoreB - scoreA;
-  })[0];
+  const bestLead = [...stats].sort((a,b) => (b.p*0.5 + (1-b.out/n)*0.5) - (a.p*0.5 + (1-a.out/n)*0.5))[0];
+  const worstLead = [...stats].sort((a,b) => b.danger - a.danger)[0];
 
-  // Most dangerous suit to lead (likely to get Thulla)
-  const riskiestToLead = [...suitStats].sort((a, b) => b.dangerScore - a.dangerScore)[0];
-
-  // Suit with most cards still in play = safest to bleed out
-  const mostCards = [...suitStats].sort((a, b) => b.rem - a.rem)[0];
-
-  // Per-player advice
-  const playerAdvice = state.players.map(playerIdx => {
-    const name = state.playerNames[playerIdx];
-    const missingsSuits = SUITS.filter(s => !playerStatus[playerIdx][s.key]);
-    const hasSuits = SUITS.filter(s => playerStatus[playerIdx][s.key]);
-
-    // Suits this player CAN follow
-    const safeSuitsToLead = hasSuits.filter(s => {
-      const stat = suitStats.find(ss => ss.key === s.key);
-      return stat.p > 0.4; // still has good cards remaining
-    });
-
-    // Best suit to lead against this player (they are OUT of it = Thulla opportunity)
-    const exploitSuits = missingsSuits.map(s => suitStats.find(ss => ss.key === s.key));
-
-    // Risk level for this player
-    const riskLevel = missingsSuits.length === 0 ? "low" :
-                      missingsSuits.length === 1 ? "medium" : "high";
-
-    return { playerIdx, name, missingsSuits, hasSuits, safeSuitsToLead, exploitSuits, riskLevel };
+  const adv = state.players.map(i => {
+    const missing = SUITS.filter(s => !state.playerStatus[i][s.key]);
+    const risk = missing.length===0?"low":missing.length===1?"medium":"high";
+    return { i, name:state.playerNames[i], missing, risk };
   });
-
-  const selectedAdvice = playerAdvice.find(p => p.playerIdx === selectedPlayer);
-
-  const riskColor = { low: "#4ade80", medium: "#f59e0b", high: "#e63946" };
-  const riskBg    = { low: "#081a0a", medium: "#1a1208", high: "#1a0808" };
-  const riskBorder= { low: "#4ade8033", medium: "#f59e0b33", high: "#e6394633" };
+  const sel = adv.find(a=>a.i===selPlayer);
+  const rc = {low:"#4ade80",medium:"#f59e0b",high:"#e63946"};
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
 
-      {/* ── GLOBAL STRATEGY PANEL ── */}
-      <div style={{
-        background: "linear-gradient(135deg, #0d1e33, #09172a)",
-        border: "1px solid #c9a84c33", borderRadius: 14, padding: "20px 22px",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-          <span style={{ fontSize: 20 }}>🧠</span>
-          <span style={{ color: "#c9a84c", fontSize: 11, letterSpacing: 2, fontWeight: "bold" }}>GAME STRATEGY ADVISOR</span>
+      {/* Top 2 cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div style={{ background:"#081a0a", border:"1px solid #4ade8022", borderRadius:12, padding:"14px 16px" }}>
+          <div style={{ color:"#4ade80", fontSize:9, letterSpacing:2, marginBottom:8 }}>✅ LEAD THIS</div>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:28, color:bestLead.color }}>{bestLead.symbol}</span>
+            <div>
+              <div style={{ color:"#d8ccc0", fontWeight:"bold" }}>{bestLead.label}</div>
+              <div style={{ color:"#2a4060", fontSize:11 }}>{bestLead.r} left · {bestLead.out} out</div>
+            </div>
+          </div>
         </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(3,1fr)" : "1fr", gap: 12 }}>
-
-          {/* Best suit to lead */}
-          <div style={{ background: "#081a0a", border: "1px solid #4ade8033", borderRadius: 10, padding: "14px 16px" }}>
-            <div style={{ color: "#4ade80", fontSize: 10, letterSpacing: 1.5, marginBottom: 8 }}>✅ BEST SUIT TO LEAD</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <span style={{ fontSize: 28, color: bestToLead.color }}>{bestToLead.symbol}</span>
-              <div>
-                <div style={{ color: "#d8ccc0", fontWeight: "bold", fontSize: 15 }}>{bestToLead.label}</div>
-                <div style={{ color: "#4a6a5a", fontSize: 11 }}>{bestToLead.rem} cards left · {bestToLead.playersOut} players out</div>
-              </div>
-            </div>
-            <div style={{ color: "#4a8a5a", fontSize: 12, lineHeight: 1.6 }}>
-              Most players still have this suit. Leading it will likely discard {numPlayers} cards cleanly.
-            </div>
-          </div>
-
-          {/* Riskiest suit to lead */}
-          <div style={{ background: "#1a0808", border: "1px solid #e6394633", borderRadius: 10, padding: "14px 16px" }}>
-            <div style={{ color: "#e63946", fontSize: 10, letterSpacing: 1.5, marginBottom: 8 }}>⚠ AVOID LEADING</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <span style={{ fontSize: 28, color: riskiestToLead.color }}>{riskiestToLead.symbol}</span>
-              <div>
-                <div style={{ color: "#d8ccc0", fontWeight: "bold", fontSize: 15 }}>{riskiestToLead.label}</div>
-                <div style={{ color: "#6a3a3a", fontSize: 11 }}>{riskiestToLead.rem} cards left · {riskiestToLead.playersOut} players out</div>
-              </div>
-            </div>
-            <div style={{ color: "#8a4a4a", fontSize: 12, lineHeight: 1.6 }}>
-              {riskiestToLead.playersOut} player(s) are confirmed out. Leading this risks getting a Thulla pile back.
-            </div>
-          </div>
-
-          {/* Suit to drain */}
-          <div style={{ background: "#0a0e1a", border: "1px solid #a78bfa33", borderRadius: 10, padding: "14px 16px" }}>
-            <div style={{ color: "#a78bfa", fontSize: 10, letterSpacing: 1.5, marginBottom: 8 }}>🎯 DRAIN THIS SUIT</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <span style={{ fontSize: 28, color: mostCards.color }}>{mostCards.symbol}</span>
-              <div>
-                <div style={{ color: "#d8ccc0", fontWeight: "bold", fontSize: 15 }}>{mostCards.label}</div>
-                <div style={{ color: "#4a4a6a", fontSize: 11 }}>{mostCards.rem} cards remaining</div>
-              </div>
-            </div>
-            <div style={{ color: "#6a6a9a", fontSize: 12, lineHeight: 1.6 }}>
-              Most cards remain in this suit. Keep leading it to deplete opponents' hands fastest.
+        <div style={{ background:"#1a0808", border:"1px solid #e6394622", borderRadius:12, padding:"14px 16px" }}>
+          <div style={{ color:"#e63946", fontSize:9, letterSpacing:2, marginBottom:8 }}>⚠ AVOID</div>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:28, color:worstLead.color }}>{worstLead.symbol}</span>
+            <div>
+              <div style={{ color:"#d8ccc0", fontWeight:"bold" }}>{worstLead.label}</div>
+              <div style={{ color:"#3a1a1a", fontSize:11 }}>{worstLead.r} left · {worstLead.out} out</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── SUIT THREAT METER ── */}
-      <div style={{ background: "linear-gradient(135deg, #0d1e33, #09172a)", border: "1px solid #c9a84c22", borderRadius: 14, padding: "18px 22px" }}>
-        <div style={{ color: "#c9a84c", fontSize: 11, letterSpacing: 2, marginBottom: 14 }}>♟ SUIT THREAT METER</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {[...suitStats].sort((a,b) => b.dangerScore - a.dangerScore).map((suit, rank) => {
-            const threatPct = Math.round(suit.dangerScore * 100);
-            const threatColor = threatPct > 60 ? "#e63946" : threatPct > 35 ? "#f59e0b" : "#4ade80";
-            return (
-              <div key={suit.key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ color: "#3a5060", fontSize: 11, width: 14 }}>#{rank+1}</span>
-                <span style={{ color: suit.color, fontSize: 18, width: 20 }}>{suit.symbol}</span>
-                <span style={{ color: "#8a9aaa", fontSize: 13, width: isDesktop ? 80 : 70 }}>{suit.label}</span>
-                <div style={{ flex: 1, background: "#060f1c", borderRadius: 6, height: 8, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", borderRadius: 6, width: `${threatPct}%`,
-                    background: `linear-gradient(90deg, ${threatColor}66, ${threatColor})`,
-                    transition: "width 0.5s",
-                  }}/>
-                </div>
-                <span style={{ color: threatColor, fontSize: 12, fontWeight: "bold", width: 40, textAlign: "right" }}>
-                  {threatPct}%
-                </span>
-                <span style={{ fontSize: 10, color: "#3a5060", width: isDesktop ? 100 : 60 }}>
-                  {suit.playersOut} out of {numPlayers}
-                </span>
+      {/* Threat meter */}
+      <div style={{ background:"#0d1e33", border:"1px solid #c9a84c18", borderRadius:12, padding:"14px 16px" }}>
+        <div style={{ color:"#2a4060", fontSize:9, letterSpacing:2, marginBottom:12 }}>THREAT LEVEL</div>
+        {[...stats].sort((a,b)=>b.danger-a.danger).map((s,rank) => {
+          const t = Math.round(s.danger*100);
+          const tc = t>60?"#e63946":t>35?"#f59e0b":"#4ade80";
+          return (
+            <div key={s.key} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+              <span style={{ color:"#1e3050", fontSize:10, width:16 }}>#{rank+1}</span>
+              <span style={{ color:s.color, fontSize:18, width:20 }}>{s.symbol}</span>
+              <span style={{ color:"#4a6a8a", fontSize:12, width:64 }}>{s.label}</span>
+              <div style={{ flex:1, background:"#060d18", borderRadius:4, height:8, overflow:"hidden" }}>
+                <div style={{ height:"100%", borderRadius:4, width:`${t}%`, background:`linear-gradient(90deg,${tc}55,${tc})`, transition:"width 0.4s" }}/>
               </div>
-            );
-          })}
-        </div>
-        <div style={{ color: "#2a3a4a", fontSize: 11, marginTop: 12 }}>
-          Higher % = more dangerous to lead. Based on cards remaining + players confirmed out.
-        </div>
+              <span style={{ color:tc, fontSize:12, fontWeight:"bold", width:32, textAlign:"right" }}>{t}%</span>
+            </div>
+          );
+        })}
       </div>
 
-      {/* ── PER PLAYER ADVISOR ── */}
-      <div style={{ background: "linear-gradient(135deg, #0d1e33, #09172a)", border: "1px solid #c9a84c22", borderRadius: 14, padding: "18px 22px" }}>
-        <div style={{ color: "#c9a84c", fontSize: 11, letterSpacing: 2, marginBottom: 14 }}>👤 PLAYER ADVISOR</div>
-
-        {/* Player selector */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+      {/* Per-player */}
+      <div style={{ background:"#0d1e33", border:"1px solid #c9a84c18", borderRadius:12, padding:"14px 16px" }}>
+        <div style={{ color:"#2a4060", fontSize:9, letterSpacing:2, marginBottom:12 }}>PLAYER INTEL</div>
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
           {state.players.map(i => (
-            <button key={i} onClick={() => setSelectedPlayer(i)} style={{
-              background: selectedPlayer === i ? "linear-gradient(135deg,#c9a84c,#9a6e20)" : "#060f1c",
-              color: selectedPlayer === i ? "#060f1c" : "#6a8aaa",
-              border: `1px solid ${selectedPlayer === i ? "#c9a84c" : "#1a2a3a"}`,
-              borderRadius: 8, padding: "8px 16px",
-              cursor: "pointer", fontFamily: "'Georgia',serif",
-              fontWeight: selectedPlayer === i ? "bold" : "normal", fontSize: 13,
-            }}>
-              {state.playerNames[i]}
-            </button>
+            <button key={i} onClick={() => setSelPlayer(i)} style={{
+              background: selPlayer===i?"linear-gradient(135deg,#c9a84c,#9a6e20)":"#060d18",
+              color: selPlayer===i?"#060d18":"#4a6a8a",
+              border:`1px solid ${selPlayer===i?"#c9a84c":"#0e1e2e"}`,
+              borderRadius:8, padding:"7px 14px", cursor:"pointer",
+              fontFamily:"'Georgia',serif", fontSize:12, fontWeight: selPlayer===i?"bold":"normal",
+            }}>{state.playerNames[i]}</button>
           ))}
         </div>
-
-        {selectedAdvice && (
+        {sel && (
           <div>
-            {/* Risk badge */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-              <div style={{
-                background: riskBg[selectedAdvice.riskLevel],
-                border: `1px solid ${riskBorder[selectedAdvice.riskLevel]}`,
-                borderRadius: 8, padding: "6px 14px",
-                color: riskColor[selectedAdvice.riskLevel],
-                fontSize: 12, fontWeight: "bold",
-              }}>
-                {selectedAdvice.riskLevel === "low" ? "🟢 LOW THREAT" :
-                 selectedAdvice.riskLevel === "medium" ? "🟡 MEDIUM THREAT" : "🔴 HIGH THREAT"}
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+              <div style={{ background: sel.risk==="low"?"#081a0a":sel.risk==="medium"?"#1a1208":"#1a0808", border:`1px solid ${rc[sel.risk]}33`, borderRadius:8, padding:"5px 12px", color:rc[sel.risk], fontSize:11, fontWeight:"bold" }}>
+                {sel.risk==="low"?"🟢 SAFE":sel.risk==="medium"?"🟡 WATCH":"🔴 DANGER"}
               </div>
-              <span style={{ color: "#3a5060", fontSize: 12 }}>
-                {selectedAdvice.missingsSuits.length === 0
-                  ? "Has all suits — unpredictable player"
-                  : `Confirmed out of ${selectedAdvice.missingsSuits.length} suit(s)`}
+              <span style={{ color:"#2a4060", fontSize:11 }}>
+                {sel.missing.length===0?"Has all suits":sel.missing.length===1?`Out of ${sel.missing[0].label}`:`Out of ${sel.missing.length} suits`}
               </span>
             </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", gap: 12 }}>
-
-              {/* What they have */}
-              <div style={{ background: "#060f1c", border: "1px solid #c9a84c1a", borderRadius: 10, padding: "14px 16px" }}>
-                <div style={{ color: "#4a6a8a", fontSize: 10, letterSpacing: 1.5, marginBottom: 10 }}>KNOWN SUITS</div>
-                {selectedAdvice.hasSuits.length === 0 ? (
-                  <div style={{ color: "#3a5060", fontSize: 13 }}>No confirmed suits remaining.</div>
-                ) : selectedAdvice.hasSuits.map(s => {
-                  const stat = suitStats.find(ss => ss.key === s.key);
-                  return (
-                    <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                      <span style={{ fontSize: 20, color: s.color }}>{s.symbol}</span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ color: "#d8ccc0", fontSize: 13 }}>{s.label}</span>
-                          <span style={{ color: "#4ade80", fontSize: 12 }}>{stat.rem} left</span>
-                        </div>
-                        <div style={{ background: "#0a1628", borderRadius: 4, height: 4, marginTop: 4, overflow: "hidden" }}>
-                          <div style={{ height: "100%", borderRadius: 4, width: `${stat.p * 100}%`, background: s.color }}/>
-                        </div>
+            {sel.missing.length > 0 && (
+              <div>
+                <div style={{ color:"#2a4060", fontSize:10, letterSpacing:1, marginBottom:8 }}>EXPLOIT — LEAD THESE:</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {sel.missing.map(s => (
+                    <div key={s.key} style={{ background:`${s.color}0f`, border:`2px solid ${s.color}55`, borderRadius:10, padding:"10px 16px", display:"flex", alignItems:"center", gap:8 }}>
+                      <span style={{ fontSize:22, color:s.color }}>{s.symbol}</span>
+                      <div>
+                        <div style={{ color:s.color, fontWeight:"bold", fontSize:13 }}>{s.label}</div>
+                        <div style={{ color:"#3a1a1a", fontSize:10 }}>They will Thulla</div>
                       </div>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-
-              {/* Exploit opportunities */}
-              <div style={{ background: "#060f1c", border: "1px solid #c9a84c1a", borderRadius: 10, padding: "14px 16px" }}>
-                <div style={{ color: "#4a6a8a", fontSize: 10, letterSpacing: 1.5, marginBottom: 10 }}>EXPLOIT (LEAD THESE)</div>
-                {selectedAdvice.exploitSuits.length === 0 ? (
-                  <div>
-                    <div style={{ color: "#3a5060", fontSize: 13, marginBottom: 8 }}>No confirmed weak suits yet.</div>
-                    <div style={{ color: "#2a4a3a", fontSize: 12, lineHeight: 1.6 }}>
-                      Watch this player carefully. Record a Thulla when they can't follow to reveal their weak suits.
-                    </div>
-                  </div>
-                ) : selectedAdvice.exploitSuits.map(stat => (
-                  <div key={stat.key} style={{
-                    display: "flex", alignItems: "center", gap: 10, marginBottom: 10,
-                    background: "#1a0808", border: "1px solid #e6394622",
-                    borderRadius: 8, padding: "10px 12px",
-                  }}>
-                    <span style={{ fontSize: 24, color: stat.color }}>{stat.symbol}</span>
-                    <div>
-                      <div style={{ color: "#e8d0c8", fontSize: 13, fontWeight: "bold" }}>Lead {stat.label}!</div>
-                      <div style={{ color: "#6a3a3a", fontSize: 11 }}>
-                        {state.playerNames[selectedPlayer]} is OUT — they must Thulla or pick up the pile
-                      </div>
-                    </div>
-                  </div>
-                ))}
+            )}
+            {sel.missing.length === 0 && (
+              <div style={{ color:"#1e3050", fontSize:12, lineHeight:1.7 }}>
+                No Thullas recorded yet. Watch this player — lead risky suits to reveal their weak cards.
               </div>
-            </div>
-
-            {/* Smart tip */}
-            <div style={{
-              marginTop: 14, background: "#0a0e1a", border: "1px solid #a78bfa22",
-              borderRadius: 10, padding: "12px 16px",
-              display: "flex", alignItems: "flex-start", gap: 10,
-            }}>
-              <span style={{ fontSize: 18, flexShrink: 0 }}>💡</span>
-              <div style={{ color: "#7a8ab0", fontSize: 12, lineHeight: 1.7 }}>
-                {selectedAdvice.missingsSuits.length === 0 && selectedAdvice.riskLevel === "low" &&
-                  `${state.playerNames[selectedPlayer]} has all suits and is unpredictable. Lead high-remaining suits to force card burn without risk of Thulla.`}
-                {selectedAdvice.missingsSuits.length === 1 &&
-                  `${state.playerNames[selectedPlayer]} is out of ${selectedAdvice.missingsSuits[0].label}. Lead it to force them to throw a different suit — you can then pick the best card to win the pile or let it discard.`}
-                {selectedAdvice.missingsSuits.length >= 2 &&
-                  `${state.playerNames[selectedPlayer]} is a high-risk player — out of ${selectedAdvice.missingsSuits.length} suits. They are likely holding a small hand. Lead any of their missing suits to force maximum disruption.`}
-                {selectedAdvice.missingsSuits.length === 0 && selectedAdvice.riskLevel !== "low" &&
-                  `No Thullas recorded yet for ${state.playerNames[selectedPlayer]}. Be cautious — they could be hiding weak suits. Watch their play pattern closely.`}
-              </div>
-            </div>
+            )}
           </div>
         )}
       </div>
-
     </div>
   );
 }
 
-// ─── MODAL ───────────────────────────────────────────────────────────────────
-function Modal({ children, onClose, isDesktop }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 500, background: "#000d", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
-      <div style={{
-        background: "linear-gradient(160deg, #0f2340, #0b1a30)",
-        border: "1px solid #c9a84c44", borderRadius: 18,
-        padding: isDesktop ? "36px 32px" : "26px 22px",
-        width: "100%", maxWidth: isDesktop ? 480 : 420,
-        boxShadow: "0 0 60px #000c, 0 0 100px #c9a84c14",
-      }} onClick={e => e.stopPropagation()}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-// ─── STYLE CONSTANTS ─────────────────────────────────────────────────────────
-const labelStyle = { display: "block", color: "#3a5060", fontSize: 10, letterSpacing: 1.5, marginBottom: 8, fontFamily: "'Georgia', serif" };
-const inputStyle = { background: "#060f1c", border: "1px solid #c9a84c33", color: "#e8dcc8", borderRadius: 8, padding: "10px 12px", fontSize: 16, width: 80, textAlign: "center", fontFamily: "'Georgia', serif", outline: "none", boxSizing: "border-box" };
-const stepBtn = { background: "#0d1e33", border: "1px solid #c9a84c33", color: "#c9a84c", width: 40, height: 40, borderRadius: 8, cursor: "pointer", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };
-const primaryBtn = { width: "100%", padding: "14px", background: "linear-gradient(135deg, #c9a84c, #9a6e20)", color: "#060f1c", border: "none", borderRadius: 10, fontWeight: "bold", fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", letterSpacing: 1, boxShadow: "0 4px 20px #c9a84c33" };
-const selectStyle = { width: "100%", background: "#060f1c", border: "1px solid #c9a84c33", color: "#e8dcc8", borderRadius: 8, padding: "11px 14px", fontSize: 15, fontFamily: "'Georgia', serif", outline: "none" };
-const iconBtn = (color, isDesktop) => ({ background: "transparent", border: `1px solid ${color}33`, color, borderRadius: 8, padding: isDesktop ? "9px 16px" : "7px 10px", cursor: "pointer", fontSize: isDesktop ? 13 : 11, fontFamily: "'Georgia', serif", whiteSpace: "nowrap" });
+// ─── STYLES ──────────────────────────────────────────────────────────────────
+const lbl = { display:"block", color:"#2a4060", fontSize:10, letterSpacing:2, marginBottom:10, fontFamily:"'Georgia',serif" };
+const hdrBtn = c => ({ background:"transparent", border:`1px solid ${c}33`, color:c, borderRadius:8, padding:"7px 12px", cursor:"pointer", fontSize:15, fontFamily:"'Georgia',serif" });
+const actionBtn = { width:"100%", padding:"12px", background:"linear-gradient(135deg,#c9a84c,#9a6e20)", color:"#060d18", border:"none", borderRadius:10, fontWeight:"bold", fontSize:14, cursor:"pointer", fontFamily:"'Georgia',serif" };
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [gameConfig, setGameConfig] = useState(null);
-  useEffect(() => {
-    document.documentElement.style.cssText = "margin:0;padding:0;width:100%;height:100%;";
-    document.body.style.cssText = "margin:0;padding:0;width:100%;min-height:100vh;overflow-x:hidden;";
-    const root = document.getElementById("root");
-    if (root) root.style.cssText = "width:100%;min-height:100vh;";
-  }, []);
-  const [gameState, gameDispatch] = useReducer((s, a) => {
-    if (a.type === "__INIT__") return a.payload;
-    return reducer(s, a);
+  const [gameState, gameDispatch] = useReducer((s,a) => {
+    if (a.type==="__INIT__") return a.payload;
+    return reducer(s,a);
   }, null);
 
+  useEffect(() => {
+    document.documentElement.style.cssText = "margin:0;padding:0;width:100%;";
+    document.body.style.cssText = "margin:0;padding:0;width:100%;background:#060d18;";
+    const r = document.getElementById("root");
+    if (r) r.style.cssText = "width:100%;";
+  }, []);
+
   const handleStart = useCallback(config => {
-    gameDispatch({ type: "__INIT__", payload: buildInitialState(config) });
+    gameDispatch({ type:"__INIT__", payload:buildInitialState(config) });
     setGameConfig(config);
   }, []);
 
   if (!gameConfig || !gameState) return <SetupPage onStart={handleStart} />;
 
   return (
-    <GameContext.Provider value={{ state: gameState, dispatch: gameDispatch }}>
-      <Dashboard onReset={() => { setGameConfig(null); gameDispatch({ type: "__INIT__", payload: null }); }} />
+    <GameContext.Provider value={{ state:gameState, dispatch:gameDispatch }}>
+      <Dashboard onReset={() => { setGameConfig(null); gameDispatch({ type:"__INIT__", payload:null }); }} />
     </GameContext.Provider>
   );
 }
