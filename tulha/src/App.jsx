@@ -401,7 +401,7 @@ function SuitsTab({ isDesktop }) {
 
 // ─── THULLA TAB ──────────────────────────────────────────────────────────────
 // Ultra fast: tap player → tap led suit → done (2 taps total)
-function ThullaTab({ isDesktop, onStartThulla }) {
+function ThullaTab({ isDesktop }) {
   const { state, dispatch } = useContext(GameContext);
   const [step, setStep] = useState(1); // 1=pick player, 2=pick suit
   const [selectedPlayer, setSelectedPlayer] = useState(null);
@@ -621,7 +621,7 @@ function PlayersTab({ isDesktop }) {
 }
 
 // ─── ADVISOR TAB ─────────────────────────────────────────────────────────────
-function AdvisorTab({ isDesktop }) {
+function AdvisorTab() {
   const { state } = useContext(GameContext);
   const [selPlayer, setSelPlayer] = useState(0);
   const n = state.players.length;
