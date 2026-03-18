@@ -4,7 +4,7 @@ import { useGameStore } from '../store/gameStore';
 export default function SetupPage() {
   const [numPlayers, setNumPlayers] = useState(4);
   const [numDecks, setNumDecks] = useState(1);
-  const [names, setNames] = useState(['Player 1', 'Player 2', 'Player 3', 'Player 4']);
+  const [names, setNames] = useState(['Me', 'Player 2', 'Player 3', 'Player 4']);
   const initGame = useGameStore(s => s.initGame);
 
   const handlePlayerChange = (n) => {
@@ -12,15 +12,18 @@ export default function SetupPage() {
     setNumPlayers(count);
     setNames(prev => {
       const a = [...prev];
+      a[0] = 'Me'; // Always keep "Me"
       while (a.length < count) a.push(`Player ${a.length + 1}`);
       return a.slice(0, count);
     });
   };
 
   const handleStart = () => {
+    const finalNames = [...names];
+    finalNames[0] = 'Me'; // Ensure "Me" is always index 0
     initGame({
       players: Array.from({ length: numPlayers }, (_, i) => i),
-      playerNames: names,
+      playerNames: finalNames,
       decks: numDecks,
     });
   };
@@ -41,7 +44,7 @@ export default function SetupPage() {
             THULLA TRACKER
           </h1>
           <p className="text-text-dark text-xs tracking-[3px] mt-1.5">
-            CARD GAME COMPANION
+            YOUR PERSONAL GAME COMPANION
           </p>
         </div>
 
@@ -98,18 +101,30 @@ export default function SetupPage() {
             <label className="block text-text-dark text-[10px] tracking-[2px] mb-2.5">PLAYER NAMES</label>
             <div className={`grid gap-2 ${numPlayers > 4 ? 'grid-cols-2' : 'grid-cols-1'}`}>
               {names.map((name, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="text-gold text-xs w-4 text-center">{i + 1}</span>
-                  <input
-                    value={name}
-                    onChange={e => {
-                      const a = [...names];
-                      a[i] = e.target.value;
-                      setNames(a);
-                    }}
-                    className="flex-1 bg-bg-secondary border border-border text-text-primary rounded-lg px-3 py-2.5 text-sm
-                      outline-none focus:border-gold/50 transition-colors"
-                  />
+                <div
+                  key={i}
+                  className={`flex items-center gap-2 ${i === 0 ? 'rounded-lg border-2 border-gold/40 bg-gold/5 p-1.5' : ''}`}
+                >
+                  <span className={`text-xs w-4 text-center ${i === 0 ? 'text-gold text-base' : 'text-gold'}`}>
+                    {i === 0 ? '👑' : i + 1}
+                  </span>
+                  {i === 0 ? (
+                    <div className="flex-1 bg-bg-secondary border border-gold/30 text-gold rounded-lg px-3 py-2.5 text-sm font-bold tracking-wider flex items-center justify-between">
+                      <span>Me</span>
+                      <span className="text-[9px] text-text-dark font-normal tracking-[1px]">YOU — THE APP HELPS YOU WIN</span>
+                    </div>
+                  ) : (
+                    <input
+                      value={name}
+                      onChange={e => {
+                        const a = [...names];
+                        a[i] = e.target.value;
+                        setNames(a);
+                      }}
+                      className="flex-1 bg-bg-secondary border border-border text-text-primary rounded-lg px-3 py-2.5 text-sm
+                        outline-none focus:border-gold/50 transition-colors"
+                    />
+                  )}
                 </div>
               ))}
             </div>

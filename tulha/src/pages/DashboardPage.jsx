@@ -11,16 +11,30 @@ import SuitProgress from '../components/SuitProgress';
 import ResetModal from '../components/ResetModal';
 
 const SECONDARY_TABS = [
-  { id: 'advisor', labelFull: '🧠 Advisor', labelShort: '🧠' },
+  { id: 'advisor', labelFull: '👑 My Coach', labelShort: '👑' },
   { id: 'history', labelFull: '📋 History', labelShort: '📋' },
 ];
 
 export default function DashboardPage() {
-  const [showSecondary, setShowSecondary] = useState(null); // null = main view, 'advisor' | 'history'
+  const [showSecondary, setShowSecondary] = useState(null);
   const [showReset, setShowReset] = useState(false);
   const [thullaOverlay, setThullaOverlay] = useState(null);
   const state = useGameStore();
   const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 900;
+
+  const { meIndex, playerNames, playerStatus, playerCards, currentTurn, suits } = state;
+  const isMyTurn = currentTurn === meIndex;
+
+  // My status calculations
+  const mySuitsOut = SUITS.filter(s => !playerStatus[meIndex]?.[s.key]);
+  const mySuitsIn = SUITS.filter(s => playerStatus[meIndex]?.[s.key]);
+  const myCards = playerCards[meIndex] || [];
+
+  // Find danger suits for me (suits where many players are out)
+  const dangerForMe = SUITS.map(s => {
+    const outCount = state.players.filter(i => i !== meIndex && !playerStatus[i]?.[s.key]).length;
+    return { ...s, outCount };
+  }).filter(s => s.outCount > 0).sort((a, b) => b.outCount - a.outCount);
 
   const handleQuickThulla = (playerIdx, ledSuit) => {
     const thrownSuit = SUITS.find(s => s.key !== ledSuit && state.playerStatus[playerIdx]?.[s.key])?.key || 'clubs';
@@ -29,7 +43,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen w-screen max-w-[100vw] overflow-x-hidden bg-bg-primary text-text-primary flex flex-col">
+    <div className="min-h-screen w-screen max-w-[100vw] overflow-x-hidden bg-bg-primary text-text-primary flex flex-col pr-4 pl-4">
 
       <Header onReset={() => setShowReset(true)} />
       <StatBar />
@@ -65,7 +79,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Secondary nav — Advisor / History toggle */}
+      {/* Secondary nav */}
       <div className="flex bg-bg-tertiary border-b border-border-light">
         <button
           onClick={() => setShowSecondary(null)}
@@ -101,9 +115,86 @@ export default function DashboardPage() {
         <div className="min-w-0 overflow-y-auto">
           <div className="p-3 lg:px-8 lg:py-6" key={showSecondary || 'main'}>
 
-            {/* MAIN VIEW: Suits + Thulla + Players stacked */}
+            {/* MAIN VIEW */}
             {showSecondary === null && (
               <div className="flex flex-col gap-5 animate-fadeIn">
+
+                {/* ===== MY STATUS BANNER ===== */}
+                <section>
+                  <div
+                    className={`rounded-xl p-4 border-2 transition-all ${
+                      isMyTurn
+                        ? 'bg-gradient-to-r from-gold/10 to-gold/5 border-gold/40 shadow-[0_0_20px_#c9a84c18]'
+                        : 'bg-gradient-to-r from-bg-secondary to-bg-card border-border-light'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">👑</span>
+                        <div>
+                          <div className="text-gold font-bold text-sm tracking-wider">MY STATUS</div>
+                          <div className="text-text-dark text-[10px]">
+                            {isMyTurn ? '🟢 Your turn to play!' : `Waiting — ${playerNames[currentTurn] || 'next player'}'s turn`}
+                          </div>
+                        </div>
+                      </div>
+                      {isMyTurn && (
+                        <div className="rounded-lg px-3 py-1.5 bg-gold/20 border border-gold/30 text-gold text-[10px] font-bold animate-pulse">
+                          YOUR TURN
+                        </div>
+                      )}
+                    </div>
+
+                    {/* My suits row */}
+                    <div className="flex gap-1.5 mb-2">
+                      {SUITS.map(s => {
+                        const has = playerStatus[meIndex]?.[s.key];
+                        return (
+                          <div
+                            key={s.key}
+                            className={`flex-1 rounded-lg py-1.5 text-center text-sm border transition-all ${
+                              has
+                                ? 'border-success/20 bg-success/8'
+                                : 'border-danger/20 bg-danger/8 opacity-50'
+                            }`}
+                            style={{ color: has ? s.color : '#e6394666' }}
+                          >
+                            <div className="text-base">{s.symbol}</div>
+                            <div className={`text-[7px] font-bold ${has ? 'text-success' : 'text-danger'}`}>
+                              {has ? 'HAS' : 'OUT'}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Quick danger alert */}
+                    {dangerForMe.length > 0 && isMyTurn && (
+                      <div className="rounded-lg bg-danger/8 border border-danger/15 p-2 mt-2">
+                        <div className="text-danger text-[9px] font-bold tracking-wider mb-1">⚠ AVOID LEADING:</div>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {dangerForMe.slice(0, 3).map(s => (
+                            <span key={s.key} className="text-[10px] text-danger/80">
+                              {s.symbol} {s.label} ({s.outCount} out)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* My tullah cards */}
+                    {myCards.length > 0 && (
+                      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-text-dark text-[9px]">My cards:</span>
+                        {myCards.map((c, idx) => (
+                          <span key={idx} className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-gold/10 border border-gold/20 text-gold">
+                            🔄 {c.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
 
                 {/* Section: Suits */}
                 <section>

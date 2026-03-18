@@ -2,79 +2,117 @@ import { useState } from 'react';
 import { useGameStore, SUITS } from '../store/gameStore';
 
 export default function StrategyAdvisor() {
-  const { suits, players, playerNames, playerStatus, decks, history } = useGameStore();
-  const [selPlayer, setSelPlayer] = useState(players[0] ?? 0);
+  const { suits, players, playerNames, playerStatus, playerCards, decks, history, meIndex, currentTurn } = useGameStore();
   const n = players.length;
+  const isMyTurn = currentTurn === meIndex;
 
-  // Calculate per-suit stats
+  // Per-suit stats
   const stats = SUITS.map(suit => {
     const s = suits[suit.key];
-    if (!s) return { ...suit, r: 0, p: 1, out: 0, inCount: n, danger: 0, played: 0 };
+    if (!s) return { ...suit, r: 0, p: 1, out: 0, inCount: n, danger: 0, played: 0, myHas: true };
     const r = s.total - s.discarded;
     const p = r / s.total;
     const out = players.filter(i => !playerStatus[i]?.[suit.key]).length;
+    const outExcludeMe = players.filter(i => i !== meIndex && !playerStatus[i]?.[suit.key]).length;
     const danger = (1 - p) * 0.6 + (out / Math.max(n, 1)) * 0.4;
-    return { ...suit, r, p, out, inCount: n - out, danger, played: s.discarded };
+    const myHas = playerStatus[meIndex]?.[suit.key] ?? true;
+    return { ...suit, r, p, out, outExcludeMe, inCount: n - out, danger, played: s.discarded, myHas };
   });
 
-  const bestLead = [...stats].sort((a, b) =>
-    (b.p * 0.5 + (1 - b.out / Math.max(n, 1)) * 0.5) - (a.p * 0.5 + (1 - a.out / Math.max(n, 1)) * 0.5)
-  )[0];
-  const worstLead = [...stats].sort((a, b) => b.danger - a.danger)[0];
+  // Best/worst for ME to lead
+  const safeForMe = [...stats]
+    .filter(s => s.r > 0)
+    .sort((a, b) =>
+      (b.p * 0.4 + (1 - b.outExcludeMe / Math.max(n - 1, 1)) * 0.6) -
+      (a.p * 0.4 + (1 - a.outExcludeMe / Math.max(n - 1, 1)) * 0.6)
+    );
+  const bestForMe = safeForMe[0];
+  const worstForMe = [...stats].filter(s => s.r > 0).sort((a, b) => b.danger - a.danger)[0];
 
-  // Per-player analysis
-  const playerAnalysis = players.map(i => {
-    const missing = SUITS.filter(s => !playerStatus[i]?.[s.key]);
-    const risk = missing.length === 0 ? 'low' : missing.length === 1 ? 'medium' : 'high';
-    return { i, name: playerNames[i], missing, risk };
-  });
-  const sel = playerAnalysis.find(a => a.i === selPlayer);
-  const riskColors = { low: '#4ade80', medium: '#f59e0b', high: '#e63946' };
+  // My suits I should dump (out of or close to out)
+  const mySuitsOut = SUITS.filter(s => !playerStatus[meIndex]?.[s.key]);
+  const mySuitsIn = SUITS.filter(s => playerStatus[meIndex]?.[s.key]);
 
-  // Game phase detection
+  // Players who can be trapped
+  const trapTargets = players
+    .filter(i => i !== meIndex)
+    .map(i => {
+      const missing = SUITS.filter(s => !playerStatus[i]?.[s.key]);
+      const owned = playerCards[i] || [];
+      return { i, name: playerNames[i], missing, owned };
+    })
+    .filter(t => t.missing.length > 0);
+
+  // Game phase
   const totalCards = decks * 52;
   const totalPlayed = Object.values(suits).reduce((a, s) => a + s.discarded, 0);
   const playedPercent = totalPlayed / totalCards;
   const phase = playedPercent < 0.3 ? 'early' : playedPercent < 0.7 ? 'mid' : 'end';
   const cardsPerPlayer = n > 0 ? Math.round((totalCards - totalPlayed) / n) : 0;
 
-  // Decision tree tips
-  const tips = [];
+  // === MY WINNING TIPS ===
+  const myTips = [];
 
-  // Phase-based tips
-  if (phase === 'early') {
-    tips.push({ icon: '🟢', text: 'Early game — Safe to play high cards (Ace, King, Queen). Low probability of cuts.', type: 'safe' });
-    tips.push({ icon: '🎯', text: 'Strategy: Start building a short suit by dumping one suit early.', type: 'info' });
-  } else if (phase === 'mid') {
-    const highRiskSuits = stats.filter(s => s.played >= 8 || s.out > 0);
-    if (highRiskSuits.length > 0) {
-      tips.push({
-        icon: '⚠️',
-        text: `Mid-game caution: ${highRiskSuits.map(s => s.label).join(', ')} ${highRiskSuits.length === 1 ? 'has' : 'have'} high cut risk.`,
-        type: 'warning'
+  // What should I play?
+  if (isMyTurn && bestForMe) {
+    if (bestForMe.outExcludeMe === 0) {
+      myTips.push({
+        icon: '🎯', type: 'safe',
+        text: `Lead ${bestForMe.symbol} ${bestForMe.label} — no opponents are out. Safe!`,
+      });
+    } else {
+      myTips.push({
+        icon: '🎯', type: 'info',
+        text: `Best lead: ${bestForMe.symbol} ${bestForMe.label} (${bestForMe.r} left, ${bestForMe.outExcludeMe} opponents out)`,
       });
     }
-    tips.push({ icon: '🧠', text: 'Lead with low cards in risky suits. Save high cards for safe suits.', type: 'info' });
+  }
+
+  // Danger for me
+  if (mySuitsOut.length > 0) {
+    myTips.push({
+      icon: '🛡️', type: 'warning',
+      text: `You're out of ${mySuitsOut.map(s => s.symbol + ' ' + s.label).join(', ')}. If opponents lead these, you'll tullah!`,
+    });
+  }
+
+  // Phase-based strategy for me
+  if (phase === 'early') {
+    myTips.push({ icon: '💡', type: 'info', text: 'Early game — play your high cards now while it\'s safe. Dump one suit to get void early.' });
+    if (mySuitsIn.length === 4) {
+      myTips.push({ icon: '🃏', type: 'info', text: 'Strategy: Identify your weakest suit and start discarding it when others lead.' });
+    }
+  } else if (phase === 'mid') {
+    myTips.push({ icon: '🧠', type: 'warning', text: 'Mid-game — save low cards for risky leads. Play off-suit when forced to follow.' });
+    if (mySuitsOut.length === 0) {
+      myTips.push({ icon: '💪', type: 'safe', text: 'You still have all suits — strong position! Start voiding your weakest suit now.' });
+    }
   } else {
-    tips.push({ icon: '🔴', text: 'End game! Avoid holding high cards. Lead with lowest cards possible.', type: 'danger' });
-    tips.push({ icon: '⚡', text: 'CRITICAL: Never keep an Ace in your last 3 cards — almost guarantees taking the pile.', type: 'danger' });
-    tips.push({ icon: '🎯', text: `Lead the suit with most cards played (fewest remaining).`, type: 'info' });
+    myTips.push({ icon: '🔴', type: 'danger', text: 'End game! Never hold Aces/Kings — they guarantee taking the pile.' });
+    myTips.push({ icon: '⚡', type: 'danger', text: 'Lead with your lowest cards. Win = fewest tricks taken.' });
   }
 
-  // Player count adjustment
-  if (n >= 6) {
-    tips.push({ icon: '👥', text: `${n} players — suits exhaust fast. Each player has ~${Math.round(13 * decks / n)} cards per suit. Play high cards early!`, type: 'info' });
+  // Trap suggestions for ME
+  if (trapTargets.length > 0 && isMyTurn) {
+    const bestTrap = trapTargets.sort((a, b) => b.missing.length - a.missing.length)[0];
+    myTips.push({
+      icon: '🪤', type: 'info',
+      text: `Trap ${bestTrap.name}: lead ${bestTrap.missing.map(s => s.symbol).join('/')} to force tullah!`,
+    });
   }
 
-  // Suit-specific danger warnings
-  stats.forEach(s => {
-    if (s.played >= 9) {
-      tips.push({ icon: '🚨', text: `${s.symbol} ${s.label}: ${s.played} cards played — high chance 1-2 players are out. Do NOT lead unless sure!`, type: 'danger' });
-    }
-    if (s.out > 0 && s.r > 0) {
-      tips.push({ icon: '✂️', text: `${s.symbol} ${s.label}: ${s.out} player(s) confirmed out. Leading this suit WILL cause cuts.`, type: 'warning' });
-    }
-  });
+  // Warn about opponent's known cards
+  const opponentsWithCards = players
+    .filter(i => i !== meIndex && (playerCards[i] || []).length > 0)
+    .map(i => ({ name: playerNames[i], cards: playerCards[i] }));
+  if (opponentsWithCards.length > 0) {
+    opponentsWithCards.forEach(opp => {
+      myTips.push({
+        icon: '🔍', type: 'info',
+        text: `${opp.name} holds: ${opp.cards.map(c => c.label).join(', ')} — avoid leading these suit ranks!`,
+      });
+    });
+  }
 
   const tipBg = { safe: 'bg-[#081a0a] border-success/15', warning: 'bg-[#1a1208] border-warning/15', danger: 'bg-[#1a0808] border-danger/15', info: 'bg-bg-secondary border-gold/10' };
   const tipText = { safe: 'text-success', warning: 'text-warning', danger: 'text-danger', info: 'text-gold' };
@@ -82,60 +120,169 @@ export default function StrategyAdvisor() {
   return (
     <div className="flex flex-col gap-4">
 
-      {/* Game Phase Banner */}
-      <div className={`rounded-xl p-3.5 border text-center
-        ${phase === 'early' ? 'bg-[#081a0a] border-success/20' : phase === 'mid' ? 'bg-[#1a1208] border-warning/20' : 'bg-[#1a0808] border-danger/20'}`}
-      >
-        <div className={`text-[9px] tracking-[2px] mb-1
-          ${phase === 'early' ? 'text-success' : phase === 'mid' ? 'text-warning' : 'text-danger'}`}
-        >
-          {phase === 'early' ? '🟢 EARLY GAME' : phase === 'mid' ? '🟡 MID GAME' : '🔴 END GAME'}
-        </div>
-        <div className="text-text-primary text-sm font-bold">
-          {totalPlayed} / {totalCards} cards played · ~{cardsPerPlayer} per player
+      {/* My Coach Header */}
+      <div className="rounded-xl p-4 border-2 bg-gradient-to-r from-gold/10 to-gold/5 border-gold/30 text-center">
+        <div className="text-gold text-[10px] tracking-[3px] mb-1">👑 YOUR PERSONAL</div>
+        <div className="text-gold text-xl font-bold tracking-[4px]">MY COACH</div>
+        <div className="text-text-dark text-[10px] mt-1">
+          {isMyTurn ? '🟢 Your turn — see strategy below' : `⏳ ${playerNames[currentTurn]}'s turn`}
+          {' · '}{phase === 'early' ? 'Early' : phase === 'mid' ? 'Mid' : 'End'} Game · ~{cardsPerPlayer} cards each
         </div>
       </div>
 
-      {/* Lead / Avoid cards */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-[#081a0a] border border-success/15 rounded-xl p-3.5">
-          <div className="text-success text-[9px] tracking-[2px] mb-2">✅ LEAD THIS</div>
-          <div className="flex items-center gap-2">
-            <span className="text-[28px]" style={{ color: bestLead.color }}>{bestLead.symbol}</span>
-            <div>
-              <div className="text-text-primary font-bold">{bestLead.label}</div>
-              <div className="text-text-dark text-[11px]">{bestLead.r} left · {bestLead.out} out</div>
-            </div>
-          </div>
+      {/* ===== WHAT SHOULD I PLAY? ===== */}
+      <div className={`rounded-xl p-3.5 border-2 ${isMyTurn ? 'border-gold/30 bg-gradient-to-r from-[#1a1508] to-bg-secondary' : 'border-border-light bg-bg-secondary'}`}>
+        <div className={`text-[9px] tracking-[2px] mb-3 ${isMyTurn ? 'text-gold' : 'text-text-dark'}`}>
+          {isMyTurn ? '🎯 WHAT SHOULD I PLAY?' : '🎯 WHEN YOUR TURN COMES'}
         </div>
-        <div className="bg-[#1a0808] border border-danger/15 rounded-xl p-3.5">
-          <div className="text-danger text-[9px] tracking-[2px] mb-2">⚠ AVOID</div>
-          <div className="flex items-center gap-2">
-            <span className="text-[28px]" style={{ color: worstLead.color }}>{worstLead.symbol}</span>
-            <div>
-              <div className="text-text-primary font-bold">{worstLead.label}</div>
-              <div className="text-[#3a1a1a] text-[11px]">{worstLead.r} left · {worstLead.out} out</div>
+        <div className="grid grid-cols-2 gap-3">
+          {bestForMe && (
+            <div className="bg-[#081a0a] border border-success/15 rounded-xl p-3">
+              <div className="text-success text-[9px] tracking-[1px] mb-2">✅ LEAD THIS</div>
+              <div className="flex items-center gap-2">
+                <span className="text-[24px]" style={{ color: bestForMe.color }}>{bestForMe.symbol}</span>
+                <div>
+                  <div className="text-text-primary font-bold text-sm">{bestForMe.label}</div>
+                  <div className="text-text-dark text-[10px]">{bestForMe.r} left · {bestForMe.outExcludeMe} out</div>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
+          {worstForMe && (
+            <div className="bg-[#1a0808] border border-danger/15 rounded-xl p-3">
+              <div className="text-danger text-[9px] tracking-[1px] mb-2">🚫 AVOID</div>
+              <div className="flex items-center gap-2">
+                <span className="text-[24px]" style={{ color: worstForMe.color }}>{worstForMe.symbol}</span>
+                <div>
+                  <div className="text-text-primary font-bold text-sm">{worstForMe.label}</div>
+                  <div className="text-[#3a1a1a] text-[10px]">{worstForMe.r} left · {worstForMe.out} out</div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Decision Tree Tips */}
+      {/* ===== VOID MATRIX ===== */}
       <div className="bg-bg-secondary border border-gold/10 rounded-xl p-3.5">
-        <div className="text-text-dark text-[9px] tracking-[2px] mb-3">🧠 DECISION TREE</div>
+        <div className="text-text-dark text-[9px] tracking-[2px] mb-3">📊 VOID MATRIX — WHO'S OUT?</div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-center" style={{ minWidth: 0 }}>
+            <thead>
+              <tr>
+                <th className="text-left text-text-dark text-[10px] pb-2 pr-2 font-normal">Player</th>
+                {SUITS.map(s => (
+                  <th key={s.key} className="pb-2 px-1">
+                    <span className="text-base" style={{ color: s.color }}>{s.symbol}</span>
+                  </th>
+                ))}
+                <th className="text-text-dark text-[9px] pb-2 pl-2 font-normal">Risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Me first */}
+              {players.sort((a, b) => a === meIndex ? -1 : b === meIndex ? 1 : a - b).map(i => {
+                const isMe = i === meIndex;
+                const outCount = SUITS.filter(s => !playerStatus[i]?.[s.key]).length;
+                const riskLevel = outCount === 0 ? 'low' : outCount <= 2 ? 'med' : 'high';
+                const rC = riskLevel === 'low' ? '#4ade80' : riskLevel === 'med' ? '#f59e0b' : '#e63946';
+                const owned = playerCards[i] || [];
+                return (
+                  <tr key={i} className={`border-t border-border-light/30 ${isMe ? 'bg-gold/5' : ''}`}>
+                    <td className={`text-left text-xs font-bold py-2 pr-2 whitespace-nowrap ${isMe ? 'text-gold' : 'text-text-primary'}`}>
+                      {isMe ? '👑 ' : ''}{playerNames[i]}
+                      {owned.length > 0 && (
+                        <span className="text-gold text-[8px] ml-1">+{owned.length}🔄</span>
+                      )}
+                    </td>
+                    {SUITS.map(s => {
+                      const has = playerStatus[i]?.[s.key];
+                      const hasRecoveredCard = !has && owned.some(c => c.label?.includes(s.symbol));
+                      return (
+                        <td key={s.key} className="py-2 px-1">
+                          {has ? (
+                            <span className="text-success text-sm">✅</span>
+                          ) : hasRecoveredCard ? (
+                            <span className="text-warning text-[10px] font-bold" title="Has card via tullah">🔄</span>
+                          ) : (
+                            <span className="text-danger text-sm">❌</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="py-2 pl-2">
+                      <span
+                        className="inline-block rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                        style={{ color: rC, background: `${rC}18`, border: `1px solid ${rC}30` }}
+                      >
+                        {riskLevel === 'low' ? 'SAFE' : riskLevel === 'med' ? 'WATCH' : 'DANGER'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ===== TRAP OPPONENTS ===== */}
+      {trapTargets.length > 0 && (
+        <div className="bg-[#10080a] border border-[#e6394630] rounded-xl p-3.5">
+          <div className="text-danger text-[9px] tracking-[2px] mb-3">🪤 TRAP YOUR OPPONENTS</div>
+          <div className="flex flex-col gap-2">
+            {trapTargets.slice(0, 4).map(target => (
+              <div
+                key={target.i}
+                className="rounded-lg p-3 border flex items-start gap-3 bg-danger/5 border-danger/15"
+              >
+                <div className="w-8 h-8 rounded-full bg-danger/15 border border-danger/25 flex items-center justify-center text-danger text-xs font-bold flex-shrink-0">
+                  {target.i + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-text-primary font-bold text-xs mb-1">{target.name}</div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {target.missing.map(s => (
+                      <span
+                        key={s.key}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold border"
+                        style={{ color: s.color, background: `${s.color}10`, borderColor: `${s.color}25` }}
+                      >
+                        Lead {s.symbol} → tullah!
+                      </span>
+                    ))}
+                  </div>
+                  {target.owned.length > 0 && (
+                    <div className="mt-1 text-[9px] text-warning">
+                      Known cards: {target.owned.map(c => c.label).join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ===== MY STRATEGY TIPS ===== */}
+      <div className="bg-bg-secondary border border-gold/10 rounded-xl p-3.5">
+        <div className="text-gold text-[9px] tracking-[2px] mb-3">💡 MY WIN STRATEGY</div>
         <div className="flex flex-col gap-2">
-          {tips.slice(0, 6).map((tip, i) => (
+          {myTips.slice(0, 8).map((tip, i) => (
             <div key={i} className={`${tipBg[tip.type]} border rounded-lg p-2.5 flex items-start gap-2`}>
               <span className="text-sm flex-shrink-0">{tip.icon}</span>
               <span className={`${tipText[tip.type]} text-[11px] leading-relaxed`}>{tip.text}</span>
             </div>
           ))}
+          {myTips.length === 0 && (
+            <div className="text-text-darker text-xs">Record some tricks and thullas to get personalized strategy tips!</div>
+          )}
         </div>
       </div>
 
       {/* Threat meter */}
       <div className="bg-bg-secondary border border-gold/10 rounded-xl p-3.5">
-        <div className="text-text-dark text-[9px] tracking-[2px] mb-3">THREAT LEVEL</div>
+        <div className="text-text-dark text-[9px] tracking-[2px] mb-3">SUIT THREAT LEVEL</div>
         {[...stats].sort((a, b) => b.danger - a.danger).map((s, rank) => {
           const t = Math.round(s.danger * 100);
           const tc = t > 60 ? '#e63946' : t > 35 ? '#f59e0b' : '#4ade80';
@@ -151,78 +298,12 @@ export default function StrategyAdvisor() {
                 />
               </div>
               <span className="text-xs font-bold w-8 text-right" style={{ color: tc }}>{t}%</span>
+              {!s.myHas && (
+                <span className="text-danger text-[8px] font-bold">YOU'RE OUT</span>
+              )}
             </div>
           );
         })}
-      </div>
-
-      {/* Player Intel */}
-      <div className="bg-bg-secondary border border-gold/10 rounded-xl p-3.5">
-        <div className="text-text-dark text-[9px] tracking-[2px] mb-3">PLAYER INTEL</div>
-        <div className="flex gap-1.5 flex-wrap mb-3.5">
-          {players.map(i => (
-            <button
-              key={i}
-              onClick={() => setSelPlayer(i)}
-              className={`rounded-lg px-3.5 py-1.5 cursor-pointer text-xs border transition-all
-                ${selPlayer === i
-                  ? 'bg-gradient-to-br from-gold to-gold-dark text-bg-primary border-gold font-bold'
-                  : 'bg-bg-primary text-text-muted border-border-light hover:border-gold/30'
-                }`}
-            >
-              {playerNames[i]}
-            </button>
-          ))}
-        </div>
-        {sel && (
-          <div className="animate-fadeIn">
-            <div className="flex items-center gap-2 mb-3">
-              <div
-                className="rounded-lg px-3 py-1 text-[11px] font-bold border"
-                style={{
-                  background: sel.risk === 'low' ? '#081a0a' : sel.risk === 'medium' ? '#1a1208' : '#1a0808',
-                  borderColor: `${riskColors[sel.risk]}33`,
-                  color: riskColors[sel.risk],
-                }}
-              >
-                {sel.risk === 'low' ? '🟢 SAFE' : sel.risk === 'medium' ? '🟡 WATCH' : '🔴 DANGER'}
-              </div>
-              <span className="text-text-dark text-[11px]">
-                {sel.missing.length === 0
-                  ? 'Has all suits'
-                  : sel.missing.length === 1
-                    ? `Out of ${sel.missing[0].label}`
-                    : `Out of ${sel.missing.length} suits`
-                }
-              </span>
-            </div>
-            {sel.missing.length > 0 && (
-              <div>
-                <div className="text-text-dark text-[10px] tracking-[1px] mb-2">EXPLOIT — LEAD THESE:</div>
-                <div className="flex gap-2 flex-wrap">
-                  {sel.missing.map(s => (
-                    <div
-                      key={s.key}
-                      className="rounded-[10px] py-2.5 px-4 flex items-center gap-2 border-2"
-                      style={{ background: `${s.color}0f`, borderColor: `${s.color}55` }}
-                    >
-                      <span className="text-[22px]" style={{ color: s.color }}>{s.symbol}</span>
-                      <div>
-                        <div className="text-[13px] font-bold" style={{ color: s.color }}>{s.label}</div>
-                        <div className="text-[#3a1a1a] text-[10px]">They will Thulla</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {sel.missing.length === 0 && (
-              <div className="text-text-darker text-xs leading-relaxed">
-                No Thullas recorded yet. Watch this player — lead risky suits to reveal their weak cards.
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

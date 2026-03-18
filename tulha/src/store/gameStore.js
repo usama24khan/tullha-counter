@@ -10,15 +10,21 @@ function buildInitialState({ players, playerNames, decks }) {
   players.forEach(i => {
     playerStatus[i] = { hearts: true, diamonds: true, clubs: true, spades: true };
   });
+  const playerCards = {};
+  players.forEach(i => { playerCards[i] = []; });
   return {
     players,
     playerNames,
     decks,
     suits,
     playerStatus,
+    playerCards,
     history: [],
     thullaLog: [],
     isStarted: true,
+    meIndex: 0,           // "Me" is always index 0
+    currentTurn: 0,       // whose turn it is currently
+    turnLeader: 0,        // who led the current trick
   };
 }
 
@@ -29,12 +35,35 @@ export const useGameStore = create((set, get) => ({
   decks: 1,
   suits: {},
   playerStatus: {},
+  playerCards: {},
   history: [],
   thullaLog: [],
   isStarted: false,
+  meIndex: 0,
+  currentTurn: 0,
+  turnLeader: 0,
 
   initGame: ({ players, playerNames, decks }) => {
     set(buildInitialState({ players, playerNames, decks }));
+  },
+
+  // Turn management
+  setTurnLeader: (playerIdx) => {
+    set({ turnLeader: playerIdx, currentTurn: playerIdx });
+  },
+
+  nextTurn: () => {
+    const state = get();
+    const activePlayers = state.players;
+    if (activePlayers.length === 0) return;
+    const currentIdx = activePlayers.indexOf(state.currentTurn);
+    const nextIdx = (currentIdx + 1) % activePlayers.length;
+    set({ currentTurn: activePlayers[nextIdx] });
+  },
+
+  isMyTurn: () => {
+    const state = get();
+    return state.currentTurn === state.meIndex;
   },
 
   addTrick: (suitKey) => {
@@ -58,7 +87,7 @@ export const useGameStore = create((set, get) => ({
     });
   },
 
-  recordThulla: (playerIdx, ledSuit, thrownSuit) => {
+  recordThulla: (playerIdx, ledSuit, thrownSuit, cardGiven, receiverIdx) => {
     const state = get();
     const entry = {
       id: Date.now() + Math.random(),
@@ -67,14 +96,38 @@ export const useGameStore = create((set, get) => ({
       playerName: state.playerNames[playerIdx],
       ledSuit,
       thrownSuit,
+      cardGiven: cardGiven || null,
+      receiverIdx: receiverIdx ?? null,
+      receiverName: receiverIdx != null ? state.playerNames[receiverIdx] : null,
       ts: new Date().toLocaleTimeString(),
     };
+
+    // Build updated playerCards — transfer card from giver (if they have it) and add to receiver
+    const updatedCards = { ...state.playerCards };
+    let removedFromGiver = false;
+    if (cardGiven) {
+      const giverCards = [...(updatedCards[playerIdx] || [])];
+      const giverCardIdx = giverCards.findIndex(c => c.label === cardGiven);
+      if (giverCardIdx >= 0) {
+        giverCards.splice(giverCardIdx, 1);
+        updatedCards[playerIdx] = giverCards;
+        removedFromGiver = true;
+      }
+      if (receiverIdx != null) {
+        updatedCards[receiverIdx] = [
+          ...(updatedCards[receiverIdx] || []),
+          { label: cardGiven, fromPlayer: state.playerNames[playerIdx], ts: entry.ts },
+        ];
+      }
+    }
+    entry.removedFromGiver = removedFromGiver;
 
     set({
       playerStatus: {
         ...state.playerStatus,
         [playerIdx]: { ...state.playerStatus[playerIdx], [ledSuit]: false },
       },
+      playerCards: updatedCards,
       thullaLog: [entry, ...state.thullaLog],
       history: [entry, ...state.history],
     });
@@ -95,6 +148,17 @@ export const useGameStore = create((set, get) => ({
     });
   },
 
+  removeCardBadge: (playerIdx, cardIndex) => {
+    const state = get();
+    const cards = [...(state.playerCards[playerIdx] || [])];
+    if (cardIndex >= 0 && cardIndex < cards.length) {
+      cards.splice(cardIndex, 1);
+      set({
+        playerCards: { ...state.playerCards, [playerIdx]: cards },
+      });
+    }
+  },
+
   undoLastAction: () => {
     const state = get();
     const [last, ...rest] = state.history;
@@ -107,11 +171,26 @@ export const useGameStore = create((set, get) => ({
         history: rest,
       });
     } else if (last.type === 'thulla') {
+      const updatedCards = { ...state.playerCards };
+      if (last.receiverIdx != null && last.cardGiven) {
+        const cards = [...(updatedCards[last.receiverIdx] || [])];
+        const removeIdx = cards.findLastIndex(c => c.label === last.cardGiven);
+        if (removeIdx >= 0) cards.splice(removeIdx, 1);
+        updatedCards[last.receiverIdx] = cards;
+      }
+      if (last.removedFromGiver && last.cardGiven) {
+        updatedCards[last.playerIdx] = [
+          ...(updatedCards[last.playerIdx] || []),
+          { label: last.cardGiven, fromPlayer: last.receiverName || 'restored', ts: last.ts },
+        ];
+      }
+
       set({
         playerStatus: {
           ...state.playerStatus,
           [last.playerIdx]: { ...state.playerStatus[last.playerIdx], [last.ledSuit]: true },
         },
+        playerCards: updatedCards,
         thullaLog: state.thullaLog.filter(t => t.id !== last.id),
         history: rest,
       });
@@ -130,9 +209,13 @@ export const useGameStore = create((set, get) => ({
       decks: 1,
       suits: {},
       playerStatus: {},
+      playerCards: {},
       history: [],
       thullaLog: [],
       isStarted: false,
+      meIndex: 0,
+      currentTurn: 0,
+      turnLeader: 0,
     });
   },
 
